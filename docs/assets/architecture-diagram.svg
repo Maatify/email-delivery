@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 450" width="100%" height="100%" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <style>
+      .bg { fill: transparent; }
+      .box { fill: #F5F5F5; stroke: #333; stroke-width: 2; rx: 4; }
+      .highlight-box { fill: #F5F5F5; stroke: #4E8CAE; stroke-width: 2; rx: 4; stroke-dasharray: 4; }
+      .text { fill: #333; font-size: 14px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; }
+      .subtext { fill: #555; font-size: 11px; text-anchor: middle; }
+      .arrow { stroke: #555; stroke-width: 2; marker-end: url(#arrowhead); fill: none; }
+      .line { stroke: #555; stroke-width: 2; stroke-dasharray: 4; fill: none; }
+
+      @media (prefers-color-scheme: dark) {
+        .box { fill: #222; stroke: #ddd; }
+        .highlight-box { fill: #222; stroke: #4E8CAE; }
+        .text { fill: #ddd; }
+        .subtext { fill: #aaa; }
+        .arrow { stroke: #aaa; }
+        .line { stroke: #aaa; }
+      }
+    </style>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="context-stroke" />
+    </marker>
+  </defs>
+
+  <rect class="bg" width="600" height="450" />
+
+  <!-- Main Pipeline Boxes -->
+  <rect class="box" x="200" y="20" width="200" height="40" />
+  <text class="text" x="300" y="40">Application</text>
+
+  <rect class="box" x="200" y="90" width="200" height="40" />
+  <text class="text" x="300" y="110">Queue Writer</text>
+
+  <rect class="box" x="200" y="160" width="200" height="40" />
+  <text class="text" x="300" y="180">Database Queue</text>
+
+  <rect class="box" x="200" y="230" width="200" height="40" />
+  <text class="text" x="300" y="250">Email Worker</text>
+
+  <rect class="box" x="200" y="300" width="200" height="40" />
+  <text class="text" x="300" y="320">Twig Renderer</text>
+
+  <rect class="box" x="200" y="370" width="200" height="40" />
+  <text class="text" x="300" y="390">SMTP Transport (PHPMailer)</text>
+
+  <!-- Recipient text -->
+  <text class="text" x="300" y="440">Recipient</text>
+
+  <!-- Crypto Component -->
+  <rect class="highlight-box" x="450" y="130" width="130" height="80" />
+  <text class="text" x="515" y="150">maatify/crypto</text>
+  <text class="subtext" x="515" y="170">- payload encryption</text>
+  <text class="subtext" x="515" y="185">- recipient encryption</text>
+
+  <!-- Arrows -->
+  <path class="arrow" d="M 300 60 L 300 85" />
+  <path class="arrow" d="M 300 130 L 300 155" />
+  <path class="arrow" d="M 300 200 L 300 225" />
+  <path class="arrow" d="M 300 270 L 300 295" />
+  <path class="arrow" d="M 300 340 L 300 365" />
+  <path class="arrow" d="M 300 410 L 300 430" />
+
+  <!-- Crypto Connections (Dashed lines to indicate usage) -->
+  <path class="line" d="M 400 110 L 450 140" />
+  <path class="line" d="M 400 250 L 450 200" />
+</svg>

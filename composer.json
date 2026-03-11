@@ -19,8 +19,10 @@
     "php": "^8.2",
     "ext-json": "*",
     "ext-pdo": "*",
+
     "maatify/crypto": "^1.0",
     "phpmailer/phpmailer": "^6.9",
+
     "twig/twig": "^3.0",
     "psr/log": "^3.0"
   },

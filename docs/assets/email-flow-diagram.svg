@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 250" width="100%" height="100%" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <style>
+      .bg { fill: transparent; }
+      .box { fill: #F5F5F5; stroke: #333; stroke-width: 2; rx: 4; }
+      .highlight-box { fill: #F5F5F5; stroke: #4E8CAE; stroke-width: 2; rx: 4; }
+      .text { fill: #333; font-size: 13px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; }
+      .label { fill: #555; font-size: 11px; font-weight: 700; text-anchor: middle; }
+      .arrow { stroke: #555; stroke-width: 2; marker-end: url(#arrowhead); fill: none; }
+
+      @media (prefers-color-scheme: dark) {
+        .box { fill: #222; stroke: #ddd; }
+        .highlight-box { fill: #222; stroke: #4E8CAE; }
+        .text { fill: #ddd; }
+        .label { fill: #aaa; }
+        .arrow { stroke: #aaa; }
+      }
+    </style>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="context-stroke" />
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" width="800" height="250" />
+
+  <!-- Stages Labels -->
+  <text class="label" x="200" y="30">SYNCHRONOUS APP CONTEXT</text>
+  <text class="label" x="600" y="30">ASYNCHRONOUS WORKER CONTEXT</text>
+
+  <path class="arrow" d="M 400 40 L 400 220" style="stroke-dasharray: 4; marker-end: none;" />
+
+  <!-- Application / Queue Writer Stage -->
+  <rect class="box" x="20" y="60" width="160" height="40" />
+  <text class="text" x="100" y="80">Application Request</text>
+
+  <rect class="box" x="220" y="60" width="160" height="40" />
+  <text class="text" x="300" y="80">Create Email Payload</text>
+
+  <rect class="highlight-box" x="220" y="130" width="160" height="40" />
+  <text class="text" x="300" y="150">Encrypt Payload</text>
+
+  <rect class="box" x="20" y="130" width="160" height="40" />
+  <text class="text" x="100" y="150">Store in Queue</text>
+
+  <!-- Worker Stage -->
+  <rect class="box" x="420" y="130" width="160" height="40" />
+  <text class="text" x="500" y="150">Worker Polls Queue</text>
+
+  <rect class="highlight-box" x="620" y="130" width="160" height="40" />
+  <text class="text" x="700" y="150">Decrypt Payload</text>
+
+  <rect class="box" x="620" y="60" width="160" height="40" />
+  <text class="text" x="700" y="80">Render Template (Twig)</text>
+
+  <rect class="box" x="420" y="60" width="160" height="40" />
+  <text class="text" x="500" y="80">Send Email (SMTP)</text>
+
+  <!-- Final outcome -->
+  <rect class="box" x="220" y="200" width="160" height="40" />
+  <text class="text" x="300" y="220">Mark Sent / Retry</text>
+
+  <!-- Arrows First Row (Sync) -->
+  <path class="arrow" d="M 180 80 L 210 80" />
+  <path class="arrow" d="M 300 100 L 300 120" />
+  <path class="arrow" d="M 220 150 L 190 150" />
+
+  <!-- Flow across boundary -->
+  <path class="arrow" d="M 100 170 C 100 200, 420 200, 420 170 L 420 160" />
+
+  <!-- Arrows Second Row (Async) -->
+  <path class="arrow" d="M 580 150 L 610 150" />
+  <path class="arrow" d="M 700 130 L 700 110" />
+  <path class="arrow" d="M 620 80 L 590 80" />
+  <path class="arrow" d="M 420 80 C 400 80, 400 220, 390 220" />
+</svg>
