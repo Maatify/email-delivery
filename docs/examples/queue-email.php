@@ -14,12 +14,13 @@ $pdo = new PDO('mysql:host=localhost;dbname=myapp', 'root', '');
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 // 2. Setup Encryption dependencies
-// These are required by the PdoEmailQueueWriter to encrypt the payload
+// These are required by the PdoEmailQueueWriter to encrypt the payload.
+// These should typically come from your Dependency Injection container.
 /** @var CryptoProvider $cryptoProvider */
-$cryptoProvider = null; // Normally injected by your DI container
+$cryptoProvider = null; /* CryptoProvider instance */
 
 /** @var CryptoContextProviderInterface $cryptoContext */
-$cryptoContext = null; // Normally injected by your DI container
+$cryptoContext = null; /* CryptoContextProviderInterface instance */
 
 // 3. Initialize Queue Writer
 $writer = new PdoEmailQueueWriter(
@@ -47,9 +48,12 @@ $recipientEmail = 'carlos@example.com';
 // 5. Enqueue the message for asynchronous delivery
 try {
     $writer->enqueue(
-        recipient: $recipientEmail,
+        entityType: 'user',
+        entityId: '123',
+        recipientEmail: $recipientEmail,
         payload: $payload,
-        priority: 5 // Optional: 5 is higher priority than the default 10
+        senderType: 1,
+        priority: 10
     );
     echo "Email successfully enqueued!\n";
 } catch (\Throwable $e) {

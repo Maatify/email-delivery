@@ -63,7 +63,17 @@ The package is part of the **Maatify Ecosystem** and follows the same standards:
 
 ## Documentation
 
-Full documentation will be added in future releases.
+Book:
+
+- [docs/book/README.md](docs/book/README.md)
+
+Guides:
+
+- [docs/how-to/README.md](docs/how-to/README.md)
+
+Examples:
+
+- [docs/examples/README.md](docs/examples/README.md)
 
 ---
 

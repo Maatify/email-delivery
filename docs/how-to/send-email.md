@@ -36,9 +36,12 @@ $recipientEmail = 'john.doe@example.com';
 
 // Enqueue the email
 $queueWriter->enqueue(
-    recipient: $recipientEmail,
+    entityType: 'user',
+    entityId: '123',
+    recipientEmail: $recipientEmail,
     payload: $payload,
-    priority: 10 // Optional: Lower number means higher priority. Default is usually fine.
+    senderType: 1,
+    priority: 10
 );
 
 echo "Email successfully queued for delivery!";

@@ -30,13 +30,7 @@ Once you have your configuration object, you instantiate the transport layer. Th
 ```php
 use Maatify\EmailDelivery\Transport\SmtpEmailTransport;
 
-// The logger is required to record transmission errors
-$logger = new \Monolog\Logger('email_transport');
-
-$transport = new SmtpEmailTransport(
-    $config,
-    $logger
-);
+$transport = new SmtpEmailTransport($config);
 
 // This $transport instance is now ready to be injected into the EmailQueueWorker
 ```

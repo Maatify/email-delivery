@@ -15,11 +15,12 @@ $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 // 2. Encryption Setup
 // NOTE: Provide your actual crypto dependencies here.
+// These should typically come from your Dependency Injection container.
 /** @var CryptoProvider $cryptoProvider */
-$cryptoProvider = null; // Mocked for example
+$cryptoProvider = null; /* CryptoProvider instance */
 
 /** @var CryptoContextProviderInterface $cryptoContextProvider */
-$cryptoContextProvider = null; // Mocked for example
+$cryptoContextProvider = null; /* CryptoContextProviderInterface instance */
 
 // 3. Initialize the Queue Writer
 $queueWriter = new PdoEmailQueueWriter(
@@ -46,10 +47,16 @@ $payload = new EmailQueuePayloadDTO(
 
 // 5. Enqueue the Email
 $recipientEmail = 'jane.doe@example.com';
-$priority = 10; // Default priority
 
 try {
-    $queueWriter->enqueue($recipientEmail, $payload, $priority);
+    $queueWriter->enqueue(
+        entityType: 'user',
+        entityId: '123',
+        recipientEmail: $recipientEmail,
+        payload: $payload,
+        senderType: 1,
+        priority: 10
+    );
     echo "Successfully queued email for $recipientEmail\n";
 } catch (\Throwable $e) {
     echo 'Failed to queue email: ' . $e->getMessage() . "\n";

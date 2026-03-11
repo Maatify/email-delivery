@@ -23,10 +23,11 @@ $logger->pushHandler(new StreamHandler(__DIR__ . '/../../worker.log', Logger::DE
 
 // 3. Setup Cryptography Dependencies
 // (These are needed to decrypt the recipient and payload from the database)
+// These should typically come from your Dependency Injection container.
 /** @var CryptoProvider $cryptoProvider */
-$cryptoProvider = null; // Normally injected by DI
+$cryptoProvider = null; /* CryptoProvider instance */
 /** @var CryptoContextProviderInterface $cryptoContextProvider */
-$cryptoContextProvider = null; // Normally injected by DI
+$cryptoContextProvider = null; /* CryptoContextProviderInterface instance */
 
 // 4. Setup Renderer
 // Provide the path to your Twig templates directory
@@ -43,7 +44,7 @@ $config = new EmailTransportConfigDTO(
     fromName: 'My Application',
     encryption: 'tls'
 );
-$transport = new SmtpEmailTransport($config, $logger);
+$transport = new SmtpEmailTransport($config);
 
 // 6. Initialize Worker
 $worker = new EmailQueueWorker(
