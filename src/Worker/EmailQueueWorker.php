@@ -79,7 +79,7 @@ final readonly class EmailQueueWorker
                   AND (retry_after IS NULL OR retry_after <= NOW())
                 ORDER BY priority ASC, id ASC
                 LIMIT :limit
-                FOR UPDATE SKIP LOCKED
+                FOR UPDATE
             ");
 
             $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
