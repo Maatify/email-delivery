@@ -15,7 +15,9 @@ class TwigEmailRendererTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->fixturesPath = realpath(__DIR__ . '/../Fixtures/templates');
+        $path = realpath(__DIR__ . '/../Fixtures/templates');
+        if (!is_string($path)) { throw new \RuntimeException('Templates path not found'); }
+        $this->fixturesPath = $path;
     }
 
     public function testRenderSuccessfulWithGlobals(): void
