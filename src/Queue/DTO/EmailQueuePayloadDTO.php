@@ -16,11 +16,15 @@ final readonly class EmailQueuePayloadDTO
      * @param array<string, mixed> $context
      * @param string $templateKey
      * @param string $language
+     * @param string|null $replyTo Optional Reply-To email address.
+     *                             When set, the transport will add a Reply-To header
+     *                             so replies go to this address instead of the sender.
      */
     public function __construct(
         public array $context,
         public string $templateKey,
-        public string $language
+        public string $language,
+        public ?string $replyTo = null,
     ) {
     }
 
@@ -30,9 +34,10 @@ final readonly class EmailQueuePayloadDTO
     public function toArray(): array
     {
         return [
-            'context' => $this->context,
+            'context'     => $this->context,
             'templateKey' => $this->templateKey,
-            'language' => $this->language,
+            'language'    => $this->language,
+            'replyTo'     => $this->replyTo,
         ];
     }
 }

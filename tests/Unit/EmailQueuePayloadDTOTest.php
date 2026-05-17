@@ -20,6 +20,7 @@ class EmailQueuePayloadDTOTest extends TestCase
         $this->assertSame($context, $dto->context);
         $this->assertSame($templateKey, $dto->templateKey);
         $this->assertSame($language, $dto->language);
+        $this->assertNull($dto->replyTo);
     }
 
     public function testToArraySerialization(): void
@@ -34,8 +35,36 @@ class EmailQueuePayloadDTOTest extends TestCase
             'context'     => $context,
             'templateKey' => $templateKey,
             'language'    => $language,
+            'replyTo'     => null,
         ];
 
         $this->assertSame($expected, $dto->toArray());
+    }
+
+    public function testWithReplyTo(): void
+    {
+        $context     = ['name' => 'Bob'];
+        $templateKey = 'notification';
+        $language    = 'en';
+        $replyTo     = 'customer@example.com';
+
+        $dto = new EmailQueuePayloadDTO($context, $templateKey, $language, $replyTo);
+
+        $this->assertSame($replyTo, $dto->replyTo);
+
+        $expected = [
+            'context'     => $context,
+            'templateKey' => $templateKey,
+            'language'    => $language,
+            'replyTo'     => $replyTo,
+        ];
+
+        $this->assertSame($expected, $dto->toArray());
+    }
+
+    public function testReplyToDefaultsToNull(): void
+    {
+        $dto = new EmailQueuePayloadDTO([], 'test', 'en');
+        $this->assertNull($dto->replyTo);
     }
 }

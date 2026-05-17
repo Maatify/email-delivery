@@ -20,7 +20,8 @@ class SmtpEmailTransport implements EmailTransportInterface
 
     public function send(
         string $recipientEmail,
-        RenderedEmailDTO $email
+        RenderedEmailDTO $email,
+        ?string $replyToEmail = null,
     ): void {
         $mail = new PHPMailer(true);
 
@@ -49,6 +50,10 @@ class SmtpEmailTransport implements EmailTransportInterface
             // Recipients
             $mail->setFrom($this->config->fromAddress, $this->config->fromName);
             $mail->addAddress($recipientEmail);
+
+            if ($replyToEmail !== null) {
+                $mail->addReplyTo($replyToEmail);
+            }
 
             // Content
             $mail->isHTML(true);

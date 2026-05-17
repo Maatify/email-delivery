@@ -372,4 +372,35 @@ class EmailQueueWorkerIntegrationTest extends TestCase
         $worker->processBatch(10);
     }
 
+
+    public function testWorkerSendsEmailWithReplyTo(): void
+    {
+        $payload = new EmailQueuePayloadDTO(
+            ['name' => 'Admin Alert'],
+            'welcome',
+            'en',
+            replyTo: 'customer@example.com',
+        );
+        $this->writer->enqueue('contact_form', '1', 'admin@example.com', $payload, 1);
+
+        $this->transport->expects($this->once())
+            ->method('send')
+            ->with(
+                'admin@example.com',
+                $this->anything(),
+                'customer@example.com',
+            );
+
+        $this->logger->expects($this->once())
+            ->method('info')
+            ->with('Email sent', $this->arrayHasKey('job_id'));
+
+        $this->worker->processBatch(10);
+
+        $stmt = $this->pdo->query("SELECT * FROM cd_email_queue WHERE status = 'sent'");
+        $this->assertInstanceOf(\PDOStatement::class, $stmt);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $this->assertCount(1, $rows);
+    }
+
 }

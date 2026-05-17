@@ -32,6 +32,8 @@ use Throwable;
  *   payload_key_id: string,
  *   attempts: int|string
  * }
+ *
+ * @phpstan-type DecodedPayload array{context: array<string, mixed>, templateKey: string, language: string, replyTo?: string|null}
  */
 final readonly class EmailQueueWorker
 {
@@ -156,11 +158,15 @@ final readonly class EmailQueueWorker
 
             // ── Decode payload ────────────────────────────────
             try {
-                /** @var array{context: array<string, mixed>, templateKey: string, language: string} $payloadData */
+                /** @var DecodedPayload $payloadData */
                 $payloadData = json_decode($payloadJson, true, 512, JSON_THROW_ON_ERROR);
             } catch (JsonException $e) {
                 throw new \RuntimeException('invalid_payload_format', 0, $e);
             }
+
+            // ── Extract Reply-To (optional) ───────────────────
+            // Old payloads (pre-1.1.0) won't have this key — use ?? null
+            $replyTo = $payloadData['replyTo'] ?? null;
 
             // ── Render ────────────────────────────────────────
             try {
@@ -182,7 +188,7 @@ final readonly class EmailQueueWorker
 
             // ── Send ──────────────────────────────────────────
             try {
-                $this->transport->send($recipient, $renderedEmail);
+                $this->transport->send($recipient, $renderedEmail, $replyTo);
             } catch (EmailTransportException $e) {
                 throw new \RuntimeException('smtp_transport_error', 0, $e);
             }

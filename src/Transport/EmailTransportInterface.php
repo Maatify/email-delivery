@@ -14,6 +14,7 @@ interface EmailTransportInterface
      */
     public function send(
         string $recipientEmail,
-        RenderedEmailDTO $email
+        RenderedEmailDTO $email,
+        ?string $replyToEmail = null,
     ): void;
 }
