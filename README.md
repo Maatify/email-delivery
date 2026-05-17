@@ -56,10 +56,15 @@ By decoupling the process, the library introduces an robust **async email pipeli
 - Background worker processing
 - Encrypted queue payloads
 - Retry mechanism for failed emails
+- **Reply-To support** — optional Reply-To header for admin notifications ¹
 - Framework-agnostic design
 - Designed for transactional email systems
 
-## Quick Example
+¹ *Available since v1.1.0*
+
+## Quick Examples
+
+### Basic usage — customer-facing email
 
 ```php
 use Maatify\EmailDelivery\Queue\DTO\EmailQueuePayloadDTO;
@@ -85,6 +90,34 @@ $queueWriter->enqueue(
     payload: $payload,
     senderType: 1,
     priority: 10
+);
+```
+
+### Admin notification with Reply-To (v1.1.0+)
+
+```php
+use Maatify\EmailDelivery\Queue\DTO\EmailQueuePayloadDTO;
+
+// Payload with optional replyTo — email goes TO the admin,
+// but Reply-To is set to the customer so admin replies reach them.
+$payload = new EmailQueuePayloadDTO(
+    templateKey: 'admin_notification',
+    language: 'en',
+    context: [
+        'customer_name'    => 'Ahmed',
+        'customer_email'   => 'customer@example.com',
+        'customer_message' => 'I need help with my account.',
+    ],
+    replyTo: 'customer@example.com',
+);
+
+$queueWriter->enqueue(
+    entityType: 'contact_form',
+    entityId: '456',
+    recipientEmail: 'admin@example.com',
+    payload: $payload,
+    senderType: 1,
+    priority: 5
 );
 ```
 
