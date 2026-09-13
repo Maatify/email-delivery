@@ -68,6 +68,7 @@ class TwigEmailRenderer implements EmailRendererInterface
             }
 
             $subject = trim($template->renderBlock('subject', $data));
+            $subject = html_entity_decode($subject, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
             if ($subject === '') {
                 throw new EmailRenderException(
