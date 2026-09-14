@@ -58,6 +58,28 @@ class TwigEmailRendererTest extends TestCase
         $this->assertStringContainsString('Bienvenue à MyApp.', $result->htmlBody);
     }
 
+    public function testDynamicSubjectRemainsLiteralWhileHtmlBodyIsEscaped(): void
+    {
+        $renderer = new TwigEmailRenderer(
+            templatesPath: $this->fixturesPath,
+            globals: ['global_app_name' => 'MyApp'],
+            cachePath: false
+        );
+
+        $value = 'A & B <Test> "quoted"';
+        $result = $renderer->render(
+            'welcome',
+            'en',
+            new GenericEmailPayload(['name' => $value, 'lang' => 'en'])
+        );
+
+        $this->assertSame('Welcome ' . $value, $result->subject);
+        $this->assertStringContainsString(
+            'Hello A &amp; B &lt;Test&gt; &quot;quoted&quot;,',
+            $result->htmlBody
+        );
+    }
+
     public function testThrowsWhenTemplateMissing(): void
     {
         $renderer = new TwigEmailRenderer(

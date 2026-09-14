@@ -25,3 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `EmailQueuePayloadDTO::toArray()` now includes `replyTo` key (null when not set).
 - Existing payloads without `replyTo` are handled gracefully via `?? null` (backward compatible).
+
+## [1.1.1] - 2026-09-14
+
+### Fixed
+- Dynamic Twig subject values are decoded from the HTML-escaped block output before being exposed as the SMTP subject.
+- HTML body escaping remains unchanged.
+- Added regression coverage for special characters in dynamic subjects.
