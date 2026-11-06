@@ -62,3 +62,17 @@ column, but an old worker lacks keyed UTC timing: assess/drain or run it with ex
 DB/PHP settings before letting it process existing keyed jobs. Do not run an automatic down migration
 that drops durable identities, and do not bulk reset `processing` rows: the package has no built-in
 reclaim/recovery policy for them. Investigate acceptance/SMTP ambiguity before an operator acts.
+
+
+## Optional synthetic recording
+
+Apply [`004_email_synthetic_requests.sql`](../schema/mysql/004_email_synthetic_requests.sql) only when
+adopting `PdoSyntheticEmailStore`. It is independent of001/002/003 and creates no real queue or receipt
+table. Existing mail users need no migration for this additive feature. `IF NOT EXISTS` is not a schema
+compatibility proof: the adapter fails closed if the dedicated package schema is incompatible.
+
+Configure a separate idle exception-mode/autocommit UTC PDO, existing crypto provider/context provider,
+and an explicit retention duration. Schedule bounded `purgeExpired()` calls in trusted maintenance.
+Grant necessary metadata visibility; no custom triggers/outgoing foreign keys or altered indexes/columns.
+Expiry is not automatic deletion. Synthetic cleanup never prunes real receipts. Disable synthetic callers
+before any separately approved removal of its optional table. See the [complete contract](reference/synthetic-recording.md).

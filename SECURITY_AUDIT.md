@@ -43,3 +43,13 @@ and other values disable AutoTLS. Choose transport encryption explicitly; the DT
 mandatory-encryption policy. Keep debug output restricted because SMTP diagnostics may expose data.
 
 [Documentation](docs/README.md) · [Encryption](docs/book/encryption.md) · [Transport](docs/book/transport.md)
+
+
+## Synthetic recording boundary
+
+Optional `PdoSyntheticEmailStore` records encrypted inert requests in an independent table, using
+role-separated synthetic crypto contexts. The worker never reads it. A synthetic result confirms a
+committed recording, not real acceptance/delivery. Metadata remains plaintext; authentication, quotas,
+cleanup scheduling, uniform public responses and complete-path timing measurements are consumer concerns.
+This primitive does not establish constant-time behavior or complete account-enumeration protection.
+See [synthetic reference](docs/reference/synthetic-recording.md) for explicit retention and unknown commits.

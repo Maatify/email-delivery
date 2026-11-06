@@ -71,6 +71,19 @@ final class EmailQueueFaultPdo extends PDO
         return $fetchMode === null ? parent::query($query) : parent::query($query, $fetchMode, ...$fetchModeArgs);
     }
 
+    /** @param array<int, mixed> $options */
+    public function prepare(string $query, array $options = []): PDOStatement|false
+    {
+        if (str_contains($query, 'cd_email_synthetic_requests') && in_array($this->mode, ['synthetic_prepare_false', 'synthetic_prepare_throw'], true)) {
+            ++$this->executeFaults;
+            if ($this->mode === 'synthetic_prepare_throw') {
+                throw new PDOException('Fixture synthetic preparation failure');
+            }
+            return false;
+        }
+        return parent::prepare($query, $options);
+    }
+
     public function beginTransaction(): bool
     {
         ++$this->beginCalls;
@@ -114,10 +127,16 @@ final class EmailQueueFaultPdo extends PDO
     {
         ($this->beforeExecuteHook ?? static function (string $sql): void {
         })($sql);
-        $stage = str_starts_with($sql, 'INSERT INTO cd_email_enqueue_receipts') ? 'receipt'
-            : (str_starts_with($sql, 'INSERT INTO cd_email_queue') ? 'queue'
-                : (str_starts_with($sql, 'UPDATE cd_email_enqueue_receipts') ? 'link' : null));
-        if ($stage !== null && str_starts_with($this->mode, $stage . '_')) {
+        $stage = match (true) {
+            str_starts_with($sql, 'INSERT INTO cd_email_synthetic_requests') => 'synthetic',
+            str_starts_with($sql, 'SELECT record_id, recorded_at, expires_at FROM cd_email_synthetic_requests') => 'synthetic_read',
+            str_starts_with($sql, 'DELETE FROM cd_email_synthetic_requests') => 'synthetic_delete',
+            str_starts_with($sql, 'INSERT INTO cd_email_enqueue_receipts') => 'receipt',
+            str_starts_with($sql, 'INSERT INTO cd_email_queue') => 'queue',
+            str_starts_with($sql, 'UPDATE cd_email_enqueue_receipts') => 'link',
+            default => null,
+        };
+        if ($stage !== null && in_array($this->mode, [$stage . '_false', $stage . '_throw'], true)) {
             ++$this->executeFaults;
             if (str_ends_with($this->mode, '_throw')) {
                 throw new PDOException('Fixture statement failure');

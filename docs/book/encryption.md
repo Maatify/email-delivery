@@ -2,7 +2,7 @@
 
 [Book](README.md) · [Security architecture](../../SECURITY_AUDIT.md) · [Keyed retention](../reference/idempotency.md#privacy-retention-and-purge)
 
-Both writers encrypt recipient bytes and JSON template payload through the supplied
+Both real enqueue writers encrypt recipient bytes and JSON template payload through the supplied
 `maatify/crypto` `CryptoProvider`, using contexts from `emailQueueRecipient()` and `emailQueuePayload()`.
 AES-256-GCM cipher/IV/tag/key ID are stored in binary-compatible columns. The worker decrypts those
 fields before rendering. This authenticates encrypted material, not every plaintext row/routing field.
@@ -22,3 +22,9 @@ decrypt the fingerprint and can still show acceptance.
 Routing/entity IDs, template/language, timestamps/states, request namespace/key and receipt/job IDs are
 visible metadata. Never place secrets/PII in request identities, and protect plaintext last-error/log data.
 Field encryption does not replace database access controls, namespace authorization or log redaction.
+
+
+Synthetic recording uses the same public crypto provider with **different versioned domains**,
+never the real worker's recipient/payload domains. Recipient/JSON payload stay encrypted and synthetic
+metadata stays plaintext. Explicit synthetic retention does not change indefinite real receipt/key retention.
+See [exact domain names and limits](../reference/synthetic-recording.md#isolation-and-encryption).

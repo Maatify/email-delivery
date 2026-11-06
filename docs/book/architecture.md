@@ -11,6 +11,7 @@ authorization, connection/key configuration, process supervision and any HTTP in
 | --- | --- |
 | `PdoEmailQueueWriter` | Encrypt and insert one job per call; legacy void API |
 | `PdoIdempotentEmailQueue` | Atomically bind explicit scoped identity to one job/receipt; reject content conflict |
+| `PdoSyntheticEmailStore` | Independent encrypted inert recording and bounded expiry cleanup; no worker handoff |
 | `cd_email_queue` | Encrypted recipient/context plus scheduling and processing metadata |
 | `cd_email_enqueue_receipts` | Durable identity, encrypted digest and original job/receipt link |
 | `EmailQueueWorker` | Claim due pending batch, commit, decrypt/render, invoke transport, record outcome/retry |
@@ -27,3 +28,6 @@ automatic `processing` recovery. See [worker](worker.md) and [retry limits](retr
 [ADR-008](../ADR-008-Email-Delivery-Independent-Queue.md) is the historical locked independent-channel
 decision. [ADR-010](../ADR-010-Idempotent-Email-Enqueue.md) describes its implemented, unreleased
 keyed storage extension; it does not move notification orchestration into this library.
+
+Synthetic storage is a separate optional path, outside both delivery-flow diagrams above. See
+[ADR-011](../ADR-011-Synthetic-Email-Recording.md) and the [contract](../reference/synthetic-recording.md).

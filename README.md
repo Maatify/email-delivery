@@ -22,13 +22,14 @@ transport through PHPMailer. Applications enqueue work; a separately run worker 
 ---
 
 These pages describe the development checkout. Features in [Unreleased](CHANGELOG.md#unreleased),
-including keyed enqueue, require a release containing them. This documentation update does not
+including keyed enqueue and synthetic recording, require a release containing them. This documentation update does not
 choose a version, publish a package or apply a database migration.
 
 ## Start here
 
 - [Documentation map](docs/README.md)
 - [Idempotency and receipt reference](docs/reference/idempotency.md) — the complete keyed API contract
+- [Synthetic no-send recording](docs/reference/synthetic-recording.md) — encrypted inert storage and bounded maintenance
 - [Install or upgrade the schema](docs/upgrade.md) — fresh and existing installations differ
 - [Prepare the next release](docs/release-preparation.md)
 - [Examples](docs/examples/README.md), [how-to guides](docs/how-to/README.md), [architecture book](docs/book/README.md)
@@ -40,6 +41,7 @@ choose a version, publish a package or apply a database migration.
 | --- | --- | --- |
 | Each call intentionally creates another job | `EmailQueueWriterInterface::enqueue()` / `PdoEmailQueueWriter` | `void`; no request deduplication |
 | Retrying one identified request must not create another job | `IdempotentEmailQueueWriterInterface::enqueueOnce()` / `PdoIdempotentEmailQueue` | A committed receipt; different content on the same key conflicts |
+| Record an inert request without any email job | `SyntheticEmailRecorderInterface::record()` / `PdoSyntheticEmailStore` | Distinct synthetic record; never a delivery receipt |
 | Observe an accepted keyed request | `EmailEnqueueReceiptReaderInterface::find(namespace, key)` | Scoped receipt or `null`; no recipient/context returned |
 
 Keyed enqueue atomically stores a job and its durable receipt. Repeating the same namespace/key and
@@ -53,13 +55,17 @@ composer require maatify/email-delivery
 ```
 
 The package requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer and PSR-3 logging.
-The production keyed storage path uses MySQL/MariaDB with `pdo_mysql` and the package-owned
+The production keyed and synthetic storage paths use MySQL/MariaDB with `pdo_mysql` and the package-owned
 [SQL files](schema/mysql). SQLite is used by legacy tests, not supported as keyed production storage.
 Supply your application PDO, crypto provider/context provider, renderer, transport and logger through DI.
 Monolog is not a package dependency.
 
 Apply the [schema installation/upgrade](docs/upgrade.md) before adopting the keyed API. Do not run
 all numbered SQL files on a fresh installation: the binding upgrade is for an existing legacy table.
+
+Synthetic recording uses an optional independent table and separate crypto domains. Its retention is
+explicitly configured by the consumer; cleanup is scheduled externally. It provides no constant-time or
+HTTP security guarantee. See the [full contract](docs/reference/synthetic-recording.md).
 
 ## Small enqueue example
 
