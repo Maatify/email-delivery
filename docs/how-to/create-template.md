@@ -1,67 +1,50 @@
-# How to Create a Template
+# Create a Twig email template
 
-The **Maatify Email Delivery** library utilizes the Twig templating engine to render both HTML and plain-text versions of your transactional emails. This decoupling allows you to maintain clean, reusable templates separate from your PHP logic.
+[Guides](README.md) · [Renderer contract](../book/rendering.md) · [Direct-render function](../examples/render-email.php)
 
-## 1. Organizing Templates
+Use a loader root such as `/application/templates`. Queue/render key `welcome` and language `en`
+resolve to `templates/emails/welcome/en.twig`. Templates require a nonempty `subject` block and
+produce HTML; no plain-text body is generated.
 
-Templates are organized in a directory structure that inherently supports internationalization (i18n) by language code. When you request a template to be rendered, you specify a `templateKey` (the base name of the template) and a `language` (e.g., `en`, `fr`).
+## Layout file
 
-The renderer looks for templates in the following structure:
-
-```
-emails/{templateKey}/{language}.twig
-```
-
-For instance, if you are rendering an order confirmation email (`order-confirmation`) in French (`fr`), the renderer will expect the file at `emails/order-confirmation/fr.twig`.
-
-## 2. Using Twig Blocks
-
-You can create a base layout template that contains common elements like a header, footer, and styling. Your individual email templates can then extend this layout.
+File: `templates/emails/layout.twig`
 
 ```twig
-{# emails/layout.twig #}
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>{% block subject %}Default Subject{% endblock %}</title>
-</head>
-<body>
-    <header>
-        <h1>My Company</h1>
-    </header>
-
-    <main>
-        {% block content %}{% endblock %}
-    </main>
-
-    <footer>
-        <p>Copyright © {{ "now"|date("Y") }}</p>
-    </footer>
-</body>
+<!doctype html>
+<html lang="{{ lang }}">
+<head><meta charset="UTF-8"><title>{% block subject %}{{ app_name }}{% endblock %}</title></head>
+<body>{% block content %}{% endblock %}</body>
 </html>
 ```
 
-## 3. Extending the Layout
+## Welcome template
 
-Your specific email templates (e.g., `emails/welcome-email/en.twig`) can extend the layout and override the necessary blocks. Notice the injected `lang` variable provided by the worker.
+File: `templates/emails/welcome/en.twig`
 
 ```twig
-{# emails/welcome-email/en.twig #}
-{% extends "layout.twig" %}
-
-{% block subject %}Welcome, {{ user.firstName }}!{% endblock %}
-
-{% block content %}
-    <h2>Hello {{ user.firstName }}!</h2>
-    <p>We are glad you joined us in {{ lang|upper }}.</p>
-
-    {% if isPremium %}
-        <p>Thank you for subscribing to our premium plan.</p>
-    {% endif %}
-{% endblock %}
+{% extends 'emails/layout.twig' %}
+{% block subject %}Welcome, {{ name }}!{% endblock %}
+{% block content %}<h1>Hello {{ name }}!</h1><p>Welcome to {{ app_name }}.</p>{% endblock %}
 ```
 
-## 4. Automatic Language Injection
+The `extends` path is relative to the loader root, so it includes `emails/`. Configure the renderer:
 
-The `EmailQueueWorker` automatically injects a `lang` variable into the context array before rendering. This means you don't need to explicitly pass the language code in every single payload; it is derived from the `EmailQueuePayloadDTO`'s `language` property. You can use `{{ lang }}` directly in your Twig templates (as shown above) for conditional logic or localized content rendering.
+```php
+use Maatify\EmailDelivery\Renderer\TwigEmailRenderer;
+
+function createExampleRenderer(string $templatesRoot): TwigEmailRenderer
+{
+    return new TwigEmailRenderer(
+        templatesPath: $templatesRoot,
+        globals: ['app_name' => 'Example App'],
+        cachePath: false,
+    );
+}
+```
+
+The worker injects `lang='en'` from queued language. For a direct render, pass `name` and `lang` in
+`GenericEmailPayload`; [render-email.php](../examples/render-email.php) shows that call. Strict variables
+mean missing names/globals fail rather than becoming empty strings. Subject decoding preserves literal
+characters for SMTP while HTML context escaping remains in effect. Keep templates trusted; do not
+solve missing context by applying `raw` to untrusted input.

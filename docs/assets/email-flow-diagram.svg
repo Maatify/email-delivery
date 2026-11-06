@@ -1,76 +1,49 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 250" width="100%" height="100%" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 505" width="1000" height="505" role="img" aria-labelledby="title desc">
+  <title id="title">Keyed enqueue and receipt flow</title>
+  <desc id="desc">New request commits a job and receipt atomically. Matching duplicate returns the original receipt, conflicting content is rejected. Commit failure is not proof of nonacceptance.</desc>
   <defs>
     <style>
-      .bg { fill: transparent; }
-      .box { fill: #F5F5F5; stroke: #333; stroke-width: 2; rx: 4; }
-      .highlight-box { fill: #F5F5F5; stroke: #4E8CAE; stroke-width: 2; rx: 4; }
-      .text { fill: #333; font-size: 13px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; }
-      .label { fill: #555; font-size: 11px; font-weight: 700; text-anchor: middle; }
-      .arrow { stroke: #555; stroke-width: 2; marker-end: url(#arrowhead); fill: none; }
-
-      @media (prefers-color-scheme: dark) {
-        .box { fill: #222; stroke: #ddd; }
-        .highlight-box { fill: #222; stroke: #4E8CAE; }
-        .text { fill: #ddd; }
-        .label { fill: #aaa; }
-        .arrow { stroke: #aaa; }
-      }
-    </style>
-    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-      <polygon points="0 0, 8 3, 0 6" fill="context-stroke" />
+.bg{fill:#fff}.node{fill:#f4f7fa;stroke:#456274;stroke-width:1.7}.store{fill:none;stroke:#4e8cae;stroke-width:1.5;stroke-dasharray:6 4}.warn{fill:#fff4dc;stroke:#a07320;stroke-width:1.5}.label{font-family:sans-serif;font-size:15px;font-weight:600;fill:#152d3b;text-anchor:middle}.sub{font-family:sans-serif;font-size:12px;fill:#374f5d;text-anchor:middle}.arrow{fill:none;stroke:#456274;stroke-width:1.7;marker-end:url(#arrow)}.note{fill:none;stroke:#a07320;stroke-width:1.5;stroke-dasharray:5 4}
+@media(prefers-color-scheme:dark){.bg{fill:#101820}.node{fill:#1b2c38;stroke:#8eb0c4}.label{fill:#eef5fa}.sub{fill:#c4d5df}.warn{fill:#372d1b;stroke:#b8954b}.arrow{stroke:#8eb0c4}}
+</style>
+    <marker id="arrow" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <path d="M0 0L8 3.5L0 7Z" fill="#65869b" />
     </marker>
   </defs>
-
-  <!-- Background -->
-  <rect class="bg" width="800" height="250" />
-
-  <!-- Stages Labels -->
-  <text class="label" x="200" y="30">SYNCHRONOUS APP CONTEXT</text>
-  <text class="label" x="600" y="30">ASYNCHRONOUS WORKER CONTEXT</text>
-
-  <path class="arrow" d="M 400 40 L 400 220" style="stroke-dasharray: 4; marker-end: none;" />
-
-  <!-- Application / Queue Writer Stage -->
-  <rect class="box" x="20" y="60" width="160" height="40" />
-  <text class="text" x="100" y="80">Application Request</text>
-
-  <rect class="box" x="220" y="60" width="160" height="40" />
-  <text class="text" x="300" y="80">Create Email Payload</text>
-
-  <rect class="highlight-box" x="220" y="130" width="160" height="40" />
-  <text class="text" x="300" y="150">Encrypt Payload</text>
-
-  <rect class="box" x="20" y="130" width="160" height="40" />
-  <text class="text" x="100" y="150">Store in Queue</text>
-
-  <!-- Worker Stage -->
-  <rect class="box" x="420" y="130" width="160" height="40" />
-  <text class="text" x="500" y="150">Worker Polls Queue</text>
-
-  <rect class="highlight-box" x="620" y="130" width="160" height="40" />
-  <text class="text" x="700" y="150">Decrypt Payload</text>
-
-  <rect class="box" x="620" y="60" width="160" height="40" />
-  <text class="text" x="700" y="80">Render Template (Twig)</text>
-
-  <rect class="box" x="420" y="60" width="160" height="40" />
-  <text class="text" x="500" y="80">Send Email (SMTP)</text>
-
-  <!-- Final outcome -->
-  <rect class="box" x="220" y="200" width="160" height="40" />
-  <text class="text" x="300" y="220">Mark Sent / Retry</text>
-
-  <!-- Arrows First Row (Sync) -->
-  <path class="arrow" d="M 180 80 L 210 80" />
-  <path class="arrow" d="M 300 100 L 300 120" />
-  <path class="arrow" d="M 220 150 L 190 150" />
-
-  <!-- Flow across boundary -->
-  <path class="arrow" d="M 100 170 C 100 200, 420 200, 420 170 L 420 160" />
-
-  <!-- Arrows Second Row (Async) -->
-  <path class="arrow" d="M 580 150 L 610 150" />
-  <path class="arrow" d="M 700 130 L 700 110" />
-  <path class="arrow" d="M 620 80 L 590 80" />
-  <path class="arrow" d="M 420 80 C 400 80, 400 220, 390 220" />
+  <rect class="bg" width="1000" height="505" />
+  <rect class="node" x="30" y="35" width="260" height="65" rx="7" />
+  <text class="label" x="160.0" y="59">Identified request</text>
+  <text class="sub" x="160.0" y="79">Authenticated scope + stable key</text>
+  <rect class="node" x="355" y="35" width="270" height="65" rx="7" />
+  <text class="label" x="490.0" y="59">Detached logical snapshot</text>
+  <text class="sub" x="490.0" y="79">Exact types / order / schedule mode</text>
+  <rect class="node" x="690" y="35" width="280" height="65" rx="7" />
+  <text class="label" x="830.0" y="59">Unique scope/key</text>
+  <text class="sub" x="830.0" y="79">Concurrent callers share a winner</text>
+  <path class="arrow" d="M290 67 L355 67" />
+  <path class="arrow" d="M625 67 L690 67" />
+  <rect class="node" x="690" y="180" width="280" height="80" rx="7" />
+  <text class="label" x="830.0" y="204">New winner</text>
+  <text class="sub" x="830.0" y="224">Encrypt digest and job</text>
+  <text class="sub" x="830.0" y="240">Link receipt + token; COMMIT</text>
+  <rect class="node" x="355" y="180" width="270" height="80" rx="7" />
+  <text class="label" x="490.0" y="204">Existing winner</text>
+  <text class="sub" x="490.0" y="224">Compare logical fingerprint</text>
+  <text class="sub" x="490.0" y="240">No payload replacement</text>
+  <path class="arrow" d="M830 100 L830 180" />
+  <path class="arrow" d="M830 130 L490 130 L490 180" />
+  <rect class="warn" x="30" y="355" width="260" height="65" rx="7" />
+  <text class="label" x="160.0" y="379">Different content: conflict</text>
+  <text class="sub" x="160.0" y="399">No additional accepted job</text>
+  <rect class="node" x="355" y="355" width="270" height="65" rx="7" />
+  <text class="label" x="490.0" y="379">Matching replay</text>
+  <text class="sub" x="490.0" y="399">Original receipt / original job ID</text>
+  <rect class="node" x="690" y="355" width="280" height="65" rx="7" />
+  <text class="label" x="830.0" y="379">Committed acceptance</text>
+  <text class="sub" x="830.0" y="399">Receipt returned; worker is separate</text>
+  <path class="arrow" d="M490 260 L490 355" />
+  <path class="arrow" d="M355 220 L160 220 L160 355" />
+  <path class="arrow" d="M830 260 L830 355" />
+  <text class="sub" x="490" y="450">Commit error can be unresolved: discard connection; recover with the same key on a fresh one.</text>
+  <text class="sub" x="490" y="478">Worker processing and SMTP outcomes are separate from durable enqueue acceptance.</text>
 </svg>

@@ -1,88 +1,33 @@
-# How to Setup the Worker
+# Compose and run a worker
 
-The core of the **Maatify Email Delivery** library is the `EmailQueueWorker`. This background process continuously polls the database for pending emails, decrypts their payloads, renders the templates, and sends them via SMTP.
+[Guides](README.md) · [Lifecycle and clocks](../book/worker.md) · [Typed composition](../examples/worker-runner.php)
 
-To run the worker, you need a long-running PHP script.
+`EmailQueueWorker` processes one batch when the application calls `processBatch()`. There is no
+bundled daemon/bootstrap script. Your DI container supplies PDO, crypto/context provider, renderer,
+transport and a PSR-3 logger; Monolog is not required. The [example](../examples/worker-runner.php)
+defines dependency-taking functions and does nothing at include time.
 
-## The Worker Script
+## Application bootstrap
 
-Create a script (e.g., `worker-runner.php`) that initializes the worker and runs a continuous loop. This script must assemble all the necessary dependencies.
+1. Apply the correct [fresh/upgrade SQL](../upgrade.md) before keyed callers run.
+2. Build a dedicated idle PDO with exception mode. Do not wrap the worker in another transaction.
+3. Supply read keys for queued payloads/recipients and stable contexts, plus trusted template root/globals.
+4. Construct the transport with [explicit SMTP encryption](configure-smtp.md) and restricted diagnostics.
+5. Call `processBatch(50)` from your application's supervised process. Select batch size/polling/supervision
+   in the application; those are not new package settings or automatic recovery mechanisms.
 
-```php
-<?php
+Keyed worker comparisons, retry deadlines and sent timestamps are database UTC even when its session
+is local. NULL-token/pre-003 legacy work keeps its existing local clock behavior. The worker discovers
+the optional column per transaction, does not cache it or change session settings, and fails closed when
+metadata reads fail. See the [clock table](../book/worker.md#clock-domains).
 
-use Maatify\Crypto\DX\CryptoProvider;
-use Maatify\EmailDelivery\Worker\EmailQueueWorker;
-use Monolog\Logger;
-// ... other imports for PDO, Config, Renderer, Transport, and CryptoContextProvider ...
+## Supervision and errors
 
-// 1. Setup Dependencies
-$pdo = new PDO('mysql:host=localhost;dbname=mydb', 'user', 'pass');
-$logger = new Logger('email_worker');
+Handle escaped batch/database failures in the application. Do not keep using a connection whose
+transaction state is unresolved, log raw credentials/payloads, or blindly continue an infinite loop on
+a broken connection. A process manager can restart your application entry point; it cannot infer whether
+an external SMTP send occurred or reset a queue row left `processing`.
 
-// (Assume CryptoProvider, EmailRendererInterface, EmailTransportInterface,
-// and CryptoContextProviderInterface are initialized here based on your app's config)
-$cryptoProvider = /* ... */;
-$renderer = /* ... */;
-$transport = /* ... */;
-$cryptoContextProvider = /* ... */;
-
-// 2. Initialize the Worker
-$worker = new EmailQueueWorker(
-    $pdo,
-    $cryptoProvider,
-    $renderer,
-    $transport,
-    $cryptoContextProvider,
-    $logger
-);
-
-// 3. The Continuous Loop
-echo "Starting EmailQueueWorker...\n";
-
-while (true) {
-    try {
-        // Process a batch of pending emails (e.g., up to 50 at a time)
-        $worker->processBatch(50);
-    } catch (\Throwable $e) {
-        // Log critical errors that escape the worker's internal handling
-        $logger->critical('Worker encountered a fatal error: ' . $e->getMessage());
-
-        // Prevent a tight error loop from burning CPU
-        sleep(10);
-    }
-
-    // Pause briefly before polling again to reduce database load
-    sleep(2);
-}
-```
-
-## Running the Worker in Production
-
-Running a PHP script continuously in production requires a process manager. The most common and robust way to handle this is using **Supervisor**.
-
-### Supervisor Configuration
-
-Create a configuration file for Supervisor (e.g., `/etc/supervisor/conf.d/email-worker.conf`):
-
-```ini
-[program:email-worker]
-process_name=%(program_name)s_%(process_num)02d
-command=php /path/to/your/project/worker-runner.php
-autostart=true
-autorestart=true
-user=www-data
-numprocs=2 ; Run multiple instances if you have high volume
-redirect_stderr=true
-stdout_logfile=/var/log/email-worker.log
-```
-
-After creating the file, update Supervisor:
-
-```bash
-sudo supervisorctl reread
-sudo supervisorctl update
-sudo supervisorctl start email-worker:*
-```
-
-Supervisor ensures that the worker starts when your server boots and automatically restarts it if it crashes.
+No automatic reclaim/lease/recovery cron for `processing` is implemented. Investigate queue state,
+logs and external acceptance before an explicit operator recovery decision. The library's retry tables
+apply to handled row failures, not a guarantee that every crash or DB outage is automatically retried.

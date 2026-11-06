@@ -1,58 +1,24 @@
 # Rendering
 
-The **Maatify Email Delivery** library utilizes the Twig templating engine to render both HTML and plain-text versions of your transactional emails. This decoupling allows you to maintain clean, reusable templates separate from your PHP logic.
+[Book](README.md) · [Create a template](../how-to/create-template.md) · [Direct-render example](../examples/render-email.php)
 
-## Twig Template Structure
+`TwigEmailRenderer::render(templateKey, language, EmailPayloadInterface)` returns
+`RenderedEmailDTO(subject, htmlBody, templateKey, language)`. It does not generate a plain-text body
+or `AltBody`. `GenericEmailPayload` wraps render-ready context; it is not the queued payload DTO.
 
-Templates are organized in a directory structure that inherently supports internationalization (i18n) by language code. When you request a template to be rendered, you specify a `templateKey` (the base name of the template) and a `language` (e.g., `en`, `fr`).
+The constructor is `TwigEmailRenderer(?string $templatesPath=null, array $globals=[], string|false|null
+$cachePath=null)`. Default templates are `getcwd()/templates`; default cache is `getcwd()/var/cache/twig`.
+An explicit string chooses a cache directory; false disables caching. Templates use strict variables.
 
-The renderer looks for templates in the following structure:
+The lookup path relative to the loader root is `emails/{templateKey}/{language}.twig`. A nonempty
+`subject` block is required. Subject output is trimmed and HTML entities are decoded to a literal SMTP
+subject; HTML body rendering remains separate. Missing template/subject, empty subject and Twig
+errors raise `EmailRenderException`.
 
-```
-emails/{templateKey}/{language}.twig
-```
+The **worker** injects `lang` from payload language before rendering. Calling the renderer directly
+does not inject it; pass `lang` yourself if the template uses it. Configure app-wide values using the
+`globals` constructor argument. The template guide provides matching layout paths and complete
+blocks; the direct-render example returns the DTO without invoking any transport.
 
-For instance, if you are rendering an order confirmation email (`order-confirmation`) in French (`fr`), the renderer will expect the file at `emails/order-confirmation/fr.twig`.
-
-## Example Template
-
-Below is an example of what a typical Twig email template might look like. Note that the worker automatically injects the `lang` variable into the context, so you can use `{{ lang }}` directly within your templates.
-
-```twig
-{# emails/welcome-email/en.twig #}
-
-<!DOCTYPE html>
-<html lang="{{ lang }}">
-<head>
-    <meta charset="UTF-8">
-    <title>Welcome to Our Service</title>
-</head>
-<body>
-    <h1>Hello, {{ user.firstName }}!</h1>
-
-    <p>Thank you for joining us. We're excited to have you on board.</p>
-
-    <p>Your account details:</p>
-    <ul>
-        <li>Username: {{ user.username }}</li>
-        <li>Registration Date: {{ registrationDate|date('Y-m-d') }}</li>
-    </ul>
-
-    <p>If you have any questions, feel free to contact our support team.</p>
-
-    <p>Best regards,<br>The Team</p>
-</body>
-</html>
-```
-
-## Creating a Renderer
-
-You configure the `TwigEmailRenderer` by providing the base path to your templates directory:
-
-```php
-use Maatify\EmailDelivery\Renderer\TwigEmailRenderer;
-
-$renderer = new TwigEmailRenderer('/path/to/your/templates/directory');
-```
-
-The renderer ensures that both the layout and the dynamic data passed in the `GenericEmailPayload` are properly compiled and merged into the final email content before transmission.
+Use trusted templates and normal Twig escaping for untrusted values. Do not assume the transport
+escapes arbitrary HTML or that the renderer automatically produces a plain-text alternative.

@@ -1,188 +1,114 @@
 # Maatify Email Delivery
 
-[![Latest Version](https://img.shields.io/packagist/v/maatify/email-delivery.svg?style=for-the-badge)](https://packagist.org/packages/maatify/email-delivery)
-[![PHP Version](https://img.shields.io/packagist/php-v/maatify/email-delivery.svg?style=for-the-badge)](https://packagist.org/packages/maatify/email-delivery)
-[![License](https://img.shields.io/github/license/Maatify/email-delivery?style=for-the-badge)](LICENSE)
+[![CI](https://github.com/Maatify/email-delivery/actions/workflows/ci.yml/badge.svg)](https://github.com/Maatify/email-delivery/actions/workflows/ci.yml)
+[![Packagist](https://img.shields.io/packagist/v/maatify/email-delivery.svg)](https://packagist.org/packages/maatify/email-delivery)
+[![License](https://img.shields.io/github/license/Maatify/email-delivery.svg)](LICENSE)
 
-![PHPStan](https://img.shields.io/badge/PHPStan-Level%20Max-4E8CAE)
+A framework-independent PHP library for an encrypted email queue, Twig HTML rendering and SMTP
+transport through PHPMailer. Applications enqueue work; a separately run worker attempts delivery.
 
-[![Changelog](https://img.shields.io/badge/Changelog-View-blue)](CHANGELOG.md)
-[![Security](https://img.shields.io/badge/Security-Policy-important)](SECURITY.md)
+These pages describe the development checkout. Features in [Unreleased](CHANGELOG.md#unreleased),
+including keyed enqueue, require a release containing them. This documentation update does not
+choose a version, publish a package or apply a database migration.
 
-![Monthly Downloads](https://img.shields.io/packagist/dm/maatify/email-delivery?label=Monthly%20Downloads&color=00A8E8)
-![Total Downloads](https://img.shields.io/packagist/dt/maatify/email-delivery?label=Total%20Downloads&color=2AA9E0)
+## Start here
 
-[![Security Audit](https://img.shields.io/badge/Security-Audited-green?style=for-the-badge)](SECURITY_AUDIT.md)
+- [Documentation map](docs/README.md)
+- [Idempotency and receipt reference](docs/reference/idempotency.md) — the complete keyed API contract
+- [Install or upgrade the schema](docs/upgrade.md) — fresh and existing installations differ
+- [Prepare the next release](docs/release-preparation.md)
+- [Examples](docs/examples/README.md), [how-to guides](docs/how-to/README.md), [architecture book](docs/book/README.md)
+- [Security policy](SECURITY.md) and [security architecture description](SECURITY_AUDIT.md)
 
-![Async Email](https://img.shields.io/badge/Email-Async%20Delivery-darkgreen?style=for-the-badge)
-![SMTP](https://img.shields.io/badge/Transport-SMTP-orange?style=for-the-badge)
-![Twig Templates](https://img.shields.io/badge/Templates-Twig-yellow?style=for-the-badge)
-![Maatify Ecosystem](https://img.shields.io/badge/Maatify-Ecosystem-blueviolet?style=for-the-badge)
+## Choose the enqueue contract
 
-[![Install](https://img.shields.io/badge/Install-composer%20require-blue?style=for-the-badge)](https://packagist.org/packages/maatify/email-delivery)
+| Requirement | API | Result |
+| --- | --- | --- |
+| Each call intentionally creates another job | `EmailQueueWriterInterface::enqueue()` / `PdoEmailQueueWriter` | `void`; no request deduplication |
+| Retrying one identified request must not create another job | `IdempotentEmailQueueWriterInterface::enqueueOnce()` / `PdoIdempotentEmailQueue` | A committed receipt; different content on the same key conflicts |
+| Observe an accepted keyed request | `EmailEnqueueReceiptReaderInterface::find(namespace, key)` | Scoped receipt or `null`; no recipient/context returned |
 
-![CI](https://github.com/Maatify/email-delivery/actions/workflows/ci.yml/badge.svg)
+Keyed enqueue atomically stores a job and its durable receipt. Repeating the same namespace/key and
+logical content returns the same receipt/job identity. It does **not** guarantee exactly-once SMTP,
+mailbox arrival, or automatic recovery of a worker interrupted after claiming a job.
 
----
-
-## Overview
-
-**Maatify Email Delivery** is a standalone module for rendering, queueing, and sending transactional emails.
-
-It provides:
-- Async transactional email delivery
-- Twig email rendering
-- Queue-based delivery
-- SMTP transport via PHPMailer
-- Background worker processing
-- Encrypted payload storage via `maatify/crypto`
-- Framework-agnostic architecture
-
-## Why This Library
-
-This library solves several common problems in web applications:
-- Synchronous email sending blocking requests and slowing down user responses.
-- Unreliable delivery in high-volume systems when SMTP servers drop connections.
-- Lack of templating systems for clean, maintainable transactional email layouts.
-- Difficulty scaling email infrastructure.
-
-By decoupling the process, the library introduces an robust **async email pipeline**.
-
-## Features
-
-- Async email queue
-- Twig template rendering
-- SMTP transport (PHPMailer)
-- Background worker processing
-- Encrypted queue payloads
-- Retry mechanism for failed emails
-- **Reply-To support** — optional Reply-To header for admin notifications ¹
-- Framework-agnostic design
-- Designed for transactional email systems
-
-¹ *Available since v1.1.0*
-
-## Quick Examples
-
-### Basic usage — customer-facing email
-
-```php
-use Maatify\EmailDelivery\Queue\DTO\EmailQueuePayloadDTO;
-use Maatify\EmailDelivery\Queue\PdoEmailQueueWriter;
-
-// 1. Initialize Queue Writer
-$queueWriter = new PdoEmailQueueWriter($pdo, $cryptoProvider, $cryptoContext);
-
-// 2. Create Payload
-$payload = new EmailQueuePayloadDTO(
-    templateKey: 'welcome',
-    language: 'en',
-    context: ['name' => 'John Doe']
-);
-
-$email = 'john.doe@example.com';
-
-// 3. Enqueue the email
-$queueWriter->enqueue(
-    entityType: 'user',
-    entityId: '123',
-    recipientEmail: $email,
-    payload: $payload,
-    senderType: 1,
-    priority: 10
-);
-```
-
-### Admin notification with Reply-To (v1.1.0+)
-
-```php
-use Maatify\EmailDelivery\Queue\DTO\EmailQueuePayloadDTO;
-
-// Payload with optional replyTo — email goes TO the admin,
-// but Reply-To is set to the customer so admin replies reach them.
-$payload = new EmailQueuePayloadDTO(
-    templateKey: 'admin_notification',
-    language: 'en',
-    context: [
-        'customer_name'    => 'Ahmed',
-        'customer_email'   => 'customer@example.com',
-        'customer_message' => 'I need help with my account.',
-    ],
-    replyTo: 'customer@example.com',
-);
-
-$queueWriter->enqueue(
-    entityType: 'contact_form',
-    entityId: '456',
-    recipientEmail: 'admin@example.com',
-    payload: $payload,
-    senderType: 1,
-    priority: 5
-);
-```
-
-## Architecture Overview
-
-The email delivery pipeline relies on four main components:
-- **Renderer:** Compiles data and Twig templates into HTML/Text content.
-- **Queue Writer:** Securely encrypts and stores the payload in the database queue.
-- **Worker:** A background process that decrypts, renders, and attempts delivery.
-- **Transport:** The SMTP layer that physically sends the email.
-
-```text
-Application
-      ↓
-Queue Writer
-      ↓
-Database Queue
-      ↓
-Email Worker
-      ↓
-SMTP Transport
-```
-
-## Email Delivery Pipeline
-
-```text
-Request → Queue → Worker → SMTP → Recipient
-```
-
-This system intentionally decouples email sending from application requests. Your application immediately responds to the user while the background worker handles the potentially slow and error-prone process of rendering and SMTP transmission.
-
-## System Diagrams
-
-### Architecture
-![Architecture](docs/assets/architecture-diagram.svg)
-
-### Email Flow
-![Email Flow](docs/assets/email-flow-diagram.svg)
-
-### Worker Lifecycle
-![Worker Lifecycle](docs/assets/worker-lifecycle-diagram.svg)
-
-## Installation
+## Installation and dependencies
 
 ```bash
 composer require maatify/email-delivery
 ```
 
-## Documentation
+The package requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer and PSR-3 logging.
+The production keyed storage path uses MySQL/MariaDB with `pdo_mysql` and the package-owned
+[SQL files](schema/mysql). SQLite is used by legacy tests, not supported as keyed production storage.
+Supply your application PDO, crypto provider/context provider, renderer, transport and logger through DI.
+Monolog is not a package dependency.
 
-Book:
-- [docs/book/README.md](docs/book/README.md)
+Apply the [schema installation/upgrade](docs/upgrade.md) before adopting the keyed API. Do not run
+all numbered SQL files on a fresh installation: the binding upgrade is for an existing legacy table.
 
-Guides:
-- [docs/how-to/README.md](docs/how-to/README.md)
+## Small enqueue example
 
-Examples:
-- [docs/examples/README.md](docs/examples/README.md)
+This function defines application wiring; including it does not connect or send mail. Its dependencies
+must already be configured. See the [complete examples](docs/examples/README.md) for construction,
+explicit scheduling, receipt lookup and worker composition.
 
-## Ecosystem
+```php
+use Maatify\EmailDelivery\Queue\DTO\EmailEnqueueReceiptDTO;
+use Maatify\EmailDelivery\Queue\DTO\EmailEnqueueRequestDTO;
+use Maatify\EmailDelivery\Queue\DTO\EmailQueuePayloadDTO;
+use Maatify\EmailDelivery\Queue\IdempotentEmailQueueWriterInterface;
 
-This package is part of the **Maatify Ecosystem**.
+function queueWelcome(
+    IdempotentEmailQueueWriterInterface $queue,
+    string $authenticatedNamespace,
+    string $stableRequestKey,
+    string $recipient,
+    string $name,
+): EmailEnqueueReceiptDTO {
+    return $queue->enqueueOnce(new EmailEnqueueRequestDTO(
+        consumerNamespace: $authenticatedNamespace,
+        requestKey: $stableRequestKey,
+        entityType: 'user',
+        entityId: null,
+        recipientEmail: $recipient,
+        payload: new EmailQueuePayloadDTO(['name' => $name], 'welcome', 'en'),
+        senderType: 1,
+    ));
+}
+```
 
-It relies on the `maatify/crypto` dependency to provide robust encryption. Encryption is used specifically for queue payload security, ensuring that sensitive transactional data (like password reset tokens or PII) remains unreadable if the queue database is ever compromised.
+Persist the key and intended content in the caller; do not generate a new key on every retry. Namespace
+is a scope, not authentication. Derive it from the authenticated caller and keep PII/secrets out of keys.
+The [reference](docs/reference/idempotency.md) defines canonical content, validation, transaction errors,
+indefinite receipt/key retention and recovery with the same key on a fresh connection.
+
+## Worker and delivery boundaries
+
+`EmailQueueWorker::processBatch()` claims a bounded pending batch under row locks, commits the claim,
+then decrypts/renders and calls the transport outside that transaction. Run it from your application's
+supervised process using the [worker guide](docs/how-to/setup-worker.md).
+
+Keyed jobs use database UTC for due/retry selection, retry deadlines and `sent_at`. NULL-token legacy
+jobs retain local database `NOW()` and PHP-local retry calculation. The worker supports pre-binding
+legacy tables and does not mutate the session timezone. [Clock and failure details](docs/book/worker.md).
+
+![Queue acceptance and delivery architecture](docs/assets/architecture-diagram.svg)
+
+## Development verification
+
+```bash
+composer validate --strict
+composer test
+composer analyse -- --memory-limit=512M
+```
+
+Without DB configuration, real-DB tests skip. CI is configured for PHP 8.2/8.3/8.4 with required MySQL
+integration tests and an additional no-DB skip check. For a disposable dedicated database ending in
+`_test`, set `EMAIL_DELIVERY_IT_DSN`, `EMAIL_DELIVERY_IT_USER`, `EMAIL_DELIVERY_IT_PASS` and
+`EMAIL_DELIVERY_IT_REQUIRED=1`. Tests own/drop their queue tables; never target an application database.
+See the [release checklist](docs/release-preparation.md) for evidence and documentation checks.
 
 ## License
 
-MIT License
+[MIT](LICENSE). Vulnerability reports follow [SECURITY.md](SECURITY.md).

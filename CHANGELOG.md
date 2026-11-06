@@ -1,19 +1,36 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+Changes follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). This file's Unreleased section does not
+publish a version. See [release preparation](docs/release-preparation.md).
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [1.0.0] - 2026-03-11
+## [Unreleased]
 
 ### Added
-- Queue system using PDO for durable email storage.
-- Twig rendering support with automatic language injection.
-- SMTP transport implementation backed by PHPMailer.
-- Encryption support for queue payloads via `maatify/crypto`.
-- Worker retry mechanism with exponential backoff for transient and permanent failures.
+- Optional explicit namespace/key atomic enqueue, content conflict detection, encrypted logical digest
+  and scoped durable receipt lookup (#4). Legacy void enqueue remains one insert per call.
+- Package-owned MySQL/MariaDB fresh/upgrade SQL, immutable receipt/job binding, and indefinite receipt
+  retention across queue purge/ID reuse. See [adoption instructions](docs/upgrade.md).
+- Real-DB transaction/fault/concurrency coverage and required MySQL checks in PHP 8.2/8.3/8.4 CI.
+- Consolidated [keyed API reference](docs/reference/idempotency.md), reusable dependency-injected
+  examples, truthful security architecture description, diagrams and next-release preparation guide.
 
+### Fixed
+- Keyed worker due/retry comparisons, retry deadlines and sent timestamps use database UTC independent
+  of PHP/PDO local zones (F5-01). Legacy NULL-token/pre-003 rows retain their prior clock behavior.
+
+### Compatibility and limits
+- Adopt schema before keyed callers; no synthetic identities/backfill for legacy jobs.
+- Queue acceptance is not exactly-once SMTP or mailbox delivery. No automatic interrupted-processing
+  recovery or receipt pruner is added. Existing retry delays/cap and SMTP policy remain.
+- Package publication and production schema migration are separate adoption steps; see the release preparation guide.
+
+## [1.1.1] - 2026-09-14
+
+### Fixed
+- Dynamic Twig subject values are decoded from the HTML-escaped block output before being exposed as the SMTP subject.
+- HTML body escaping remains unchanged.
+- Added regression coverage for special characters in dynamic subjects.
 ## [1.1.0] - 2026-05-17
 
 ### Added
@@ -26,9 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `EmailQueuePayloadDTO::toArray()` now includes `replyTo` key (null when not set).
 - Existing payloads without `replyTo` are handled gracefully via `?? null` (backward compatible).
 
-## [1.1.1] - 2026-09-14
+## [1.0.0] - 2026-03-11
 
-### Fixed
-- Dynamic Twig subject values are decoded from the HTML-escaped block output before being exposed as the SMTP subject.
-- HTML body escaping remains unchanged.
-- Added regression coverage for special characters in dynamic subjects.
+### Added
+- Queue system using PDO for durable email storage.
+- Twig rendering support with automatic language injection.
+- SMTP transport implementation backed by PHPMailer.
+- Encryption support for queue payloads via `maatify/crypto`.
+- Worker retry mechanism with exponential backoff for transient and permanent failures.

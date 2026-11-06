@@ -21,3 +21,5 @@ When reporting, please include:
 - A description of the vulnerability.
 - Steps to reproduce the issue.
 - Potential impact and affected versions.
+
+[Security architecture description](SECURITY_AUDIT.md) · [Documentation](docs/README.md)

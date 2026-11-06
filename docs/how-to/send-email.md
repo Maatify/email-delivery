@@ -1,50 +1,29 @@
-# How to Send an Email
+# Enqueue an email
 
-To send an email using the **Maatify Email Delivery** library, you don't send it directly. Instead, you enqueue it. The background worker will pick it up and handle the actual SMTP transmission.
+[Guides](README.md) · [API contract](../reference/idempotency.md) · [Schema adoption](../upgrade.md)
 
-## 1. Create the Payload
+First choose the identity contract: the legacy writer inserts every call; keyed enqueue requires a
+stable caller-owned namespace/key and returns a committed receipt. Neither synchronously sends SMTP.
+Apply the schema and configure real DI dependencies before calling either path.
 
-First, you need to define what you want to send. You do this by creating an `EmailQueuePayloadDTO`. This object holds the template information and the variables needed to render it.
+## Keyed request
 
-```php
-use Maatify\EmailDelivery\Queue\DTO\EmailQueuePayloadDTO;
+Use [idempotent-email.php](../examples/idempotent-email.php) to construct a keyed queue, accept a
+welcome request and look up its receipt through typed ports. Persist the request key and intended
+content in the caller. After a lost reply, reuse both; changed context, order/types or schedule mode can
+conflict. Do not derive namespaces from an unauthenticated body or put PII in keys.
 
-// The data your Twig template needs
-$context = [
-    'user' => [
-        'firstName' => 'John',
-        'lastName' => 'Doe',
-    ],
-    'orderId' => '12345',
-];
+For unavailable/unresolved outcomes, follow the [error table](../reference/idempotency.md#error-handling-and-unresolved-outcomes).
+Discard unresolved connections and reconcile the same key on a fresh one. Do not suppress exceptions
+with a generic “sent” message or compensate with another key.
 
-$payload = new EmailQueuePayloadDTO(
-    templateKey: 'order-confirmation', // Matches emails/order-confirmation/
-    language: 'en',                    // Matches emails/order-confirmation/en.twig
-    context: $context
-);
-```
+## Legacy request and Reply-To
 
-## 2. Enqueue the Email
+[basic-send.php](../examples/basic-send.php) intentionally demonstrates legacy enqueue, despite the
+historical filename. [queue-email.php](../examples/queue-email.php) demonstrates explicit legacy scheduling.
+A nullable Reply-To belongs in `EmailQueuePayloadDTO`; the worker forwards it to the transport. It is
+not a caller authorization or a delivery guarantee.
 
-Next, use your configured `PdoEmailQueueWriter` to save the payload to the database. The writer handles encrypting the recipient's address and the payload data automatically.
-
-```php
-// Assuming $queueWriter is an injected instance of PdoEmailQueueWriter
-
-$recipientEmail = 'john.doe@example.com';
-
-// Enqueue the email
-$queueWriter->enqueue(
-    entityType: 'user',
-    entityId: '123',
-    recipientEmail: $recipientEmail,
-    payload: $payload,
-    senderType: 1,
-    priority: 10
-);
-
-echo "Email successfully queued for delivery!";
-```
-
-Once enqueued, the `EmailQueueWorker` (running in the background) will discover the new record, decrypt it, render the `order-confirmation` template with the provided context, and send it via SMTP.
+A successful enqueue means queue storage/acceptance. A separately [run worker](setup-worker.md)
+attempts delivery. Inspect scoped receipt state for keyed work, respecting `queue_missing` and the
+absence of automatic interrupted-processing recovery; do not present acceptance as mailbox delivery.

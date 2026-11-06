@@ -1,41 +1,41 @@
-# How to Configure SMTP
+# Configure SMTP explicitly
 
-The **Maatify Email Delivery** library utilizes a robust SMTP transport layer (`SmtpEmailTransport`) to actually deliver your generated emails. To configure this transport, you use the `EmailTransportConfigDTO` class.
+[Guides](README.md) · [Transport behavior](../book/transport.md) · [Security policy](../../SECURITY.md)
 
-## The Configuration DTO
+Supply application-managed SMTP configuration to the readonly `EmailTransportConfigDTO`. The
+constructor's required fields are host, port, username, password, fromAddress and fromName. Optional
+fields are encryption=null, timeoutSeconds=10, charset='UTF-8' and debugLevel=0.
 
-The `EmailTransportConfigDTO` is a simple, readonly class that holds all the necessary settings for your SMTP connection.
+This reusable factory constructs an adapter; it does not send or connect until the application invokes it.
+Arguments come from your secret/configuration system, not literal production credentials in an example.
 
 ```php
 use Maatify\EmailDelivery\Config\EmailTransportConfigDTO;
-
-$config = new EmailTransportConfigDTO(
-    host: 'smtp.mailgun.org',       // Your SMTP server address
-    port: 587,                      // Typical ports: 587 (TLS), 465 (SSL)
-    username: 'postmaster@yourdomain.com', // Your SMTP username
-    password: 'your_super_secret_password',// Your SMTP password
-    fromAddress: 'no-reply@yourdomain.com',// Default sender email address
-    fromName: 'Your Application Name',     // Default sender name
-    encryption: 'tls',              // Optional: 'tls', 'ssl', or null
-    timeoutSeconds: 15,             // Optional: connection timeout (default 10)
-    charset: 'UTF-8',               // Optional: character encoding (default UTF-8)
-    debugLevel: 0                   // Optional: debug output level for PHPMailer (default 0)
-);
-```
-
-## Creating the Transport Instance
-
-Once you have your configuration object, you instantiate the transport layer. This transport layer is then injected into the `EmailQueueWorker`, which handles the actual transmission of rendered emails.
-
-```php
 use Maatify\EmailDelivery\Transport\SmtpEmailTransport;
 
-$transport = new SmtpEmailTransport($config);
-
-// This $transport instance is now ready to be injected into the EmailQueueWorker
+function createStartTlsTransport(
+    string $host,
+    int $port,
+    string $username,
+    string $password,
+    string $fromAddress,
+    string $fromName,
+): SmtpEmailTransport {
+    return new SmtpEmailTransport(new EmailTransportConfigDTO(
+        host: $host,
+        port: $port,
+        username: $username,
+        password: $password,
+        fromAddress: $fromAddress,
+        fromName: $fromName,
+        encryption: 'tls',
+        debugLevel: 0,
+    ));
+}
 ```
 
-## Best Practices
-
-*   **Environment Variables:** Always store your SMTP credentials (username, password, host, port) in environment variables rather than hardcoding them into your PHP files. Use `getenv()` or your framework's `.env` parsing to populate the DTO.
-*   **Debug Level:** When troubleshooting delivery issues, you can increase the `debugLevel` (e.g., to `1` or `2`) to see the detailed communication between your application and the SMTP server. Remember to set this back to `0` in production environments.
+Use the provider's STARTTLS port with `tls`, or explicitly choose `ssl` with its SMTPS endpoint/port.
+The default null (and values other than these two strings) disable AutoTLS and leave SMTPSecure empty;
+the DTO does not enforce an encryption policy. Configure it deliberately rather than assuming a default
+prevents plaintext. Keep credentials and debug output restricted; diagnostics can expose message data.
+The transport supplies HTML only, with optional Reply-To. SMTP return is not proof of mailbox receipt.
