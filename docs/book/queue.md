@@ -1,60 +1,28 @@
-# Queue
+# Queue storage and acceptance
 
-The **Maatify Email Delivery** library utilizes a durable, queue-based mechanism to ensure reliable email delivery. Instead of immediately dispatching emails upon request, your application safely stores the intended message, recipient information, and metadata into a persistent queue storage.
+[Book](README.md) · [Keyed API reference](../reference/idempotency.md) · [Install/upgrade](../upgrade.md)
 
-## Queue Storage
+`cd_email_queue` stores encrypted recipient and template payload, their IV/tag/key IDs, plaintext
+routing/template metadata, priority, due/retry timestamps, attempts and state. It stores template
+context, **not pre-rendered HTML**. Rendering happens later in the worker.
 
-The core component is the database table (`cd_email_queue`) which acts as the persistent storage layer. Using `PdoEmailQueueWriter`, your application enqueues email payloads. The queue writer creates a record with several important fields:
+| Path | Identity and transaction behavior |
+| --- | --- |
+| Legacy `PdoEmailQueueWriter::enqueue()` | Inserts each call, returns void, no idempotency key/receipt; does not own a transaction |
+| Keyed `PdoIdempotentEmailQueue::enqueueOnce()` | Scoped explicit key, detached logical snapshot, atomic job/receipt, owned transaction |
+| Scoped `find()` | Observes acceptance/current queue state without returning/decrypting recipient/context |
 
--   `recipient_encrypted`: The encrypted email address of the recipient.
--   `payload_encrypted`: The encrypted context data for rendering the email.
--   `status`: The current state of the message (e.g., `pending`, `processing`, `sent`, `failed`).
--   `priority`: The order of processing importance (lower values process first).
--   `scheduled_at`: The earliest time the worker should attempt to process the message.
--   `retry_after`: When the worker should next attempt a retry.
--   `attempts`: The number of times the worker has attempted to send the message.
+The [reference](../reference/idempotency.md) is the source for exact request fields, canonicalization,
+validation, exception handling and retention rules. Do not infer a keyed receipt for a legacy job.
 
-This database-backed approach provides robust tracking and fault tolerance.
+Keyed jobs carry immutable `enqueue_receipt_id`; legacy inserts leave it NULL. The token plus numeric
+job ID prevents false association after purge/ID reuse. Receipts survive queue deletion and return
+`queue_missing`; replay never recreates the purged job. There is no automatic receipt expiry/pruner.
 
-## Encrypted Payload
+Keyed schedule/timestamps are UTC. Legacy schedules retain their previous wall-clock behavior.
+The worker's [per-row clock table](worker.md#clock-domains) explains mixed-table processing.
+Lower numeric priority sorts first, then ID; a batch limit bounds selection, not external delivery time.
 
-Security is paramount in transactional emails, especially when dealing with personally identifiable information (PII). Both the recipient's email address and the payload (the context variables used to render the template) are encrypted before they are stored in the queue.
-
-When you enqueue an email, the library utilizes `maatify/crypto` (a reversible cryptography implementation). The payload undergoes AES-256-GCM encryption, producing a ciphertext (`_encrypted`), initialization vector (`_iv`), an authentication tag (`_tag`), and the ID of the key used (`_key_id`). This mechanism ensures that if your database is ever compromised, the sensitive contents of your queue remain unreadable without the corresponding cryptographic keys.
-
-## Retry Logic
-
-Because email delivery is an inherently unreliable process (SMTP servers can go offline, DNS lookups can fail, etc.), the queue worker employs a sophisticated retry mechanism.
-
-If the worker encounters a transient error (e.g., an `EmailTransportException` due to an SMTP timeout), it does not discard the email. Instead, it catches the error, increments the `attempts` counter, and schedules the email for a future retry by updating the `retry_after` field in the database.
-
-The retry logic is designed using an exponential backoff strategy:
-
-1.  Transient network errors (like SMTP failures) trigger short, back-to-back retries, assuming the disruption is brief.
-2.  More persistent errors (like encryption issues or template rendering failures) trigger longer delays between retries, giving administrators time to correct the underlying problem without overwhelming the system.
-
-After a defined maximum number of attempts (defaulting to 4), the worker marks the email as permanently `failed`, recording the `last_error` for later inspection.
-
-## Explicit request identity and durable receipts (unreleased)
-
-The additive `PdoIdempotentEmailQueue` implements `enqueueOnce()` and scoped `find()`; the legacy
-void writer still inserts each call. Apply the package-owned schema upgrade before adoption.
-See the [README](../../README.md#explicit-idempotent-enqueue-unreleased) for complete examples,
-canonical content rules, error handling, connection preconditions and installation order.
-
-Receipt acceptance and queue processing are different facts. A receipt survives deletion of its queue
-job and reports `QueueMissing`; it cannot prove that the worker sent an email. A package-owned nullable
-immutable queue token binds the receipt to the original job even after numeric ID reuse. No receipt
-pruning or automatic retry under a different key is safe under the initial indefinite-retention contract.
-
-Commit failure can be ambiguous. Discard an unresolved connection and use the same namespace/key
-on a fresh one. Do not infer a lost request from a timeout or from an unavailable queue row. This does
-not change worker backoff durations/attempt caps, SMTP behavior, or application-specific notification policy.
-
-### UTC timing for keyed jobs
-
-Keyed jobs use database UTC for due/retry selection, retry deadlines and `sent_at`, including workers
-whose PDO session and PHP use other zones. NULL-token legacy jobs retain local `NOW()` comparisons
-and PHP-local retry calculation. The worker discovers the optional column per transaction; old
-pre-003 schemas keep their original path. It never changes session timezone, backoff durations or
-SMTP policy, and does not interpret metadata read failures as an absent column.
+The worker only selects `pending` jobs whose schedule and optional retry deadline are due. Its state
+transition and operational failure boundaries are documented in [worker](worker.md); a receipt is not
+an SMTP delivery receipt or a mechanism to revive `processing` jobs.

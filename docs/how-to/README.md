@@ -1,6 +1,11 @@
-# How-To Guides
+# How-to guides
 
-- [Send Email](send-email.md)
-- [Configure SMTP](configure-smtp.md)
-- [Setup Worker](setup-worker.md)
-- [Create Template](create-template.md)
+[Documentation](../README.md) · [API reference](../reference/idempotency.md) · [Upgrade](../upgrade.md)
+
+- [Enqueue an email: keyed or legacy](send-email.md)
+- [Configure SMTP explicitly](configure-smtp.md)
+- [Compose and run a worker](setup-worker.md)
+- [Create matching Twig templates](create-template.md)
+
+Use the [typed examples](../examples/README.md) as reusable functions with injected dependencies.
+No guide or example automatically starts a worker, connects SMTP or applies SQL when included.

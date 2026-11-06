@@ -1,91 +1,53 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 700" width="100%" height="100%" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 735" width="1000" height="735" role="img" aria-labelledby="title desc">
+  <title id="title">Worker lifecycle and clock boundaries</title>
+  <desc id="desc">A pending claim commits before transport. Interruptions can leave processing without automatic recovery. Handled failures retry under fixed tables until attempt four; keyed clocks use database UTC and legacy clocks remain local.</desc>
   <defs>
     <style>
-      .bg { fill: transparent; }
-      .box { fill: #F5F5F5; stroke: #333; stroke-width: 2; rx: 4; }
-      .decision { fill: #Fdf6e3; stroke: #e6c27a; stroke-width: 2; rx: 20; }
-      .text { fill: #333; font-size: 13px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; }
-      .label { fill: #555; font-size: 11px; font-weight: 700; text-anchor: middle; }
-      .arrow { stroke: #555; stroke-width: 2; marker-end: url(#arrowhead); fill: none; }
-
-      @media (prefers-color-scheme: dark) {
-        .box { fill: #222; stroke: #ddd; }
-        .decision { fill: #3e2723; stroke: #795548; }
-        .text { fill: #ddd; }
-        .label { fill: #aaa; }
-        .arrow { stroke: #aaa; }
-      }
-    </style>
-    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-      <polygon points="0 0, 8 3, 0 6" fill="context-stroke" />
+.bg{fill:#fff}.node{fill:#f4f7fa;stroke:#456274;stroke-width:1.7}.store{fill:none;stroke:#4e8cae;stroke-width:1.5;stroke-dasharray:6 4}.warn{fill:#fff4dc;stroke:#a07320;stroke-width:1.5}.label{font-family:sans-serif;font-size:15px;font-weight:600;fill:#152d3b;text-anchor:middle}.sub{font-family:sans-serif;font-size:12px;fill:#374f5d;text-anchor:middle}.arrow{fill:none;stroke:#456274;stroke-width:1.7;marker-end:url(#arrow)}.note{fill:none;stroke:#a07320;stroke-width:1.5;stroke-dasharray:5 4}
+@media(prefers-color-scheme:dark){.bg{fill:#101820}.node{fill:#1b2c38;stroke:#8eb0c4}.label{fill:#eef5fa}.sub{fill:#c4d5df}.warn{fill:#372d1b;stroke:#b8954b}.arrow{stroke:#8eb0c4}}
+</style>
+    <marker id="arrow" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <path d="M0 0L8 3.5L0 7Z" fill="#65869b" />
     </marker>
   </defs>
-
-  <!-- Background -->
-  <rect class="bg" width="600" height="700" />
-
-  <!-- Process Steps -->
-  <rect class="box" x="225" y="20" width="150" height="40" />
-  <text class="text" x="300" y="40">Poll Queue</text>
-
-  <rect class="box" x="225" y="90" width="150" height="40" />
-  <text class="text" x="300" y="110">Fetch Pending Job</text>
-
-  <rect class="box" x="225" y="160" width="150" height="40" />
-  <text class="text" x="300" y="180">Decrypt Data</text>
-
-  <rect class="box" x="225" y="230" width="150" height="40" />
-  <text class="text" x="300" y="250">Decode Payload</text>
-
-  <rect class="box" x="225" y="300" width="150" height="40" />
-  <text class="text" x="300" y="320">Render Email</text>
-
-  <rect class="box" x="225" y="370" width="150" height="40" />
-  <text class="text" x="300" y="390">Send Email</text>
-
-  <!-- Decision Point 1 -->
-  <rect class="decision" x="225" y="440" width="150" height="40" />
-  <text class="text" x="300" y="460">Success?</text>
-
-  <!-- Yes Branch -->
-  <rect class="box" x="75" y="510" width="120" height="40" />
-  <text class="text" x="135" y="530">Mark Sent</text>
-
-  <!-- No Branch (Decision 2) -->
-  <rect class="decision" x="375" y="510" width="150" height="40" />
-  <text class="text" x="450" y="530">Retry Logic</text>
-
-  <!-- Retry Logic Outcomes -->
-  <rect class="box" x="280" y="600" width="150" height="40" />
-  <text class="text" x="355" y="620">schedule retry</text>
-
-  <rect class="box" x="450" y="600" width="130" height="40" />
-  <text class="text" x="515" y="620">mark failed</text>
-
-  <!-- Connections -->
-  <path class="arrow" d="M 300 60 L 300 85" />
-  <path class="arrow" d="M 300 130 L 300 155" />
-  <path class="arrow" d="M 300 200 L 300 225" />
-  <path class="arrow" d="M 300 270 L 300 295" />
-  <path class="arrow" d="M 300 340 L 300 365" />
-  <path class="arrow" d="M 300 410 L 300 435" />
-
-  <!-- Decision Branches -->
-  <path class="arrow" d="M 225 460 L 135 460 L 135 500" />
-  <text class="label" x="180" y="450">YES</text>
-
-  <path class="arrow" d="M 375 460 L 450 460 L 450 500" />
-  <text class="label" x="415" y="450">NO</text>
-
-  <!-- Attempts Decision Branches -->
-  <path class="arrow" d="M 450 550 L 450 570 L 355 570 L 355 590" />
-  <text class="label" x="390" y="565">attempts &lt; max</text>
-
-  <path class="arrow" d="M 450 550 L 450 570 L 515 570 L 515 590" />
-  <text class="label" x="525" y="565">attempts &gt;= max</text>
-
-  <!-- Back to Poll Queue from Mark Sent and Schedule Retry -->
-  <path class="arrow" d="M 135 550 L 135 670 L 30 670 L 30 40 L 215 40" stroke-dasharray="4" />
-  <path class="arrow" d="M 355 640 L 355 680 L 15 680 L 15 30 L 215 30" stroke-dasharray="4" />
-
+  <rect class="bg" width="1000" height="735" />
+  <rect class="node" x="325" y="20" width="310" height="60" rx="7" />
+  <text class="label" x="480.0" y="44">Begin batch; discover columns</text>
+  <text class="sub" x="480.0" y="64">No cache; no timezone mutation</text>
+  <rect class="node" x="325" y="125" width="310" height="70" rx="7" />
+  <text class="label" x="480.0" y="149">Lock due pending rows</text>
+  <text class="sub" x="480.0" y="169">UTC for keyed; NOW() for legacy</text>
+  <text class="sub" x="480.0" y="185">Priority / ID order and batch limit</text>
+  <path class="arrow" d="M480 80 L480 125" />
+  <path class="arrow" d="M480 195 L480 240" />
+  <rect class="node" x="325" y="240" width="310" height="70" rx="7" />
+  <text class="label" x="480.0" y="264">Claim and COMMIT</text>
+  <text class="sub" x="480.0" y="284">processing; attempts incremented</text>
+  <text class="sub" x="480.0" y="300">External work starts after commit</text>
+  <rect class="warn" x="40" y="230" width="235" height="100" rx="7" />
+  <text class="label" x="157.5" y="254">Interruption here</text>
+  <text class="sub" x="157.5" y="274">May leave processing indefinitely</text>
+  <text class="sub" x="157.5" y="290">No automatic reclaim/reset</text>
+  <path class="note" d="M325 275 L275 275" />
+  <path class="arrow" d="M480 310 L480 350" />
+  <rect class="node" x="325" y="350" width="310" height="70" rx="7" />
+  <text class="label" x="480.0" y="374">Decrypt / decode / render</text>
+  <text class="sub" x="480.0" y="394">HTML + subject; attempt transport</text>
+  <path class="arrow" d="M480 420 L480 445 L175 445 L175 485" />
+  <path class="arrow" d="M480 445 L790 445 L790 485" />
+  <rect class="node" x="50" y="485" width="250" height="70" rx="7" />
+  <text class="label" x="175.0" y="509">Transport returned: sent</text>
+  <text class="sub" x="175.0" y="529">Not a mailbox/read receipt</text>
+  <rect class="node" x="655" y="485" width="270" height="70" rx="7" />
+  <text class="label" x="790.0" y="509">Handled row failure</text>
+  <text class="sub" x="790.0" y="529">SMTP/default backoff tables</text>
+  <path class="arrow" d="M790 555 L790 580 L650 580 L650 610" />
+  <path class="arrow" d="M790 580 L880 580 L880 610" />
+  <rect class="node" x="535" y="610" width="230" height="65" rx="7" />
+  <text class="label" x="650.0" y="634">Attempts &lt; 4</text>
+  <text class="sub" x="650.0" y="654">pending + retry deadline</text>
+  <rect class="node" x="800" y="610" width="160" height="65" rx="7" />
+  <text class="label" x="880.0" y="634">Attempts &gt;= 4</text>
+  <text class="sub" x="880.0" y="654">failed</text>
+  <text class="sub" x="480" y="710">DB/transaction errors may escape. No promise of exactly-once external delivery.</text>
 </svg>

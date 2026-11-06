@@ -1,31 +1,29 @@
 # Architecture
 
-The **Maatify Email Delivery** library implements a decoupled, queue-based architecture for sending transactional emails asynchronously. This structure ensures your application remains responsive and resilient to transient delivery failures.
+[Book](README.md) · [Keyed contract](../reference/idempotency.md)
 
-## The Full Pipeline
+The package owns email delivery storage, rendering and transport. Applications own intent, identities,
+authorization, connection/key configuration, process supervision and any HTTP integration.
 
-The entire email delivery process is broken down into several stages, moving from the initial request to the final transmission via SMTP.
+![Architecture](../assets/architecture-diagram.svg)
 
-### 1. Application
+| Component | Implemented responsibility |
+| --- | --- |
+| `PdoEmailQueueWriter` | Encrypt and insert one job per call; legacy void API |
+| `PdoIdempotentEmailQueue` | Atomically bind explicit scoped identity to one job/receipt; reject content conflict |
+| `cd_email_queue` | Encrypted recipient/context plus scheduling and processing metadata |
+| `cd_email_enqueue_receipts` | Durable identity, encrypted digest and original job/receipt link |
+| `EmailQueueWorker` | Claim due pending batch, commit, decrypt/render, invoke transport, record outcome/retry |
+| `TwigEmailRenderer` | Nonempty subject block and HTML body; no plain-text body generation |
+| `SmtpEmailTransport` | PHPMailer SMTP call with configured TLS/SSL behavior and optional Reply-To |
 
-The process begins in your application. When an event occurs that requires an email (e.g., a user registration or an order confirmation), your application prepares the necessary data. This data includes the recipient's email address and any contextual variables required to render the email template (like the user's name or a password reset token).
+![Acceptance versus processing flow](../assets/email-flow-diagram.svg)
 
-### 2. Queue Writer
+The keyed acceptance transaction contains no SMTP call. Worker row locks protect batch claiming, not
+the external side effect. A crash after claim can leave `processing`; a transport acceptance followed by
+lost acknowledgement can be ambiguous. The library does not guarantee exactly-once SMTP or implement
+automatic `processing` recovery. See [worker](worker.md) and [retry limits](retry-mechanism.md).
 
-Your application interacts with a `Queue Writer` implementation (such as `PdoEmailQueueWriter`). Instead of sending the email immediately, the writer takes the recipient data and template context, encrypts them securely (using `maatify/crypto`), and creates a payload to be stored for later processing.
-
-### 3. Queue Storage
-
-The encrypted payload and metadata are inserted into the **Queue Storage**, typically a database table (`cd_email_queue`). This storage holds all pending emails. It tracks metadata like scheduled time, processing status (`pending`, `processing`, `sent`, `failed`), retry attempts, and priority. The storage acts as a reliable buffer, ensuring emails are not lost if the application crashes or the SMTP server is temporarily unavailable.
-
-### 4. Worker
-
-A background process, the **Worker** (`EmailQueueWorker`), continuously polls the queue storage for pending emails that are ready to be sent. When it finds pending records, it locks them for processing to prevent duplicate processing by other worker instances. The worker is responsible for decrypting the recipient and payload data.
-
-### 5. Renderer
-
-Once the payload is decrypted, the worker passes the context data and template key to the **Renderer** (`TwigEmailRenderer`). The renderer uses the Twig templating engine to generate the final HTML and plain-text versions of the email based on predefined templates.
-
-### 6. SMTP Transport
-
-Finally, the fully rendered email content is passed to the **SMTP Transport** (`SmtpEmailTransport`). The transport layer connects to the configured SMTP server (using PHPMailer under the hood) and transmits the email to the recipient. If the transmission is successful, the worker marks the queue record as `sent`. If it fails, the worker applies a retry logic with exponential backoff.
+[ADR-008](../ADR-008-Email-Delivery-Independent-Queue.md) is the historical locked independent-channel
+decision. [ADR-010](../ADR-010-Idempotent-Email-Enqueue.md) describes its implemented, unreleased
+keyed storage extension; it does not move notification orchestration into this library.
