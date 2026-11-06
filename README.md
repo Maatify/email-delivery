@@ -103,7 +103,7 @@ composer test
 composer analyse -- --memory-limit=512M
 ```
 
-Without DB configuration, real-DB tests skip. CI is configured for PHP 8.2/8.3/8.4 with required MySQL
+Without DB configuration, real-DB tests skip. CI is configured for PHP 8.2/8.3/8.4/8.5 with required MySQL
 integration tests and an additional no-DB skip check. For a disposable dedicated database ending in
 `_test`, set `EMAIL_DELIVERY_IT_DSN`, `EMAIL_DELIVERY_IT_USER`, `EMAIL_DELIVERY_IT_PASS` and
 `EMAIL_DELIVERY_IT_REQUIRED=1`. Tests own/drop their queue tables; never target an application database.

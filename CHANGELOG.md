@@ -11,7 +11,7 @@ publish a version. See [release preparation](docs/release-preparation.md).
   and scoped durable receipt lookup (#4). Legacy void enqueue remains one insert per call.
 - Package-owned MySQL/MariaDB fresh/upgrade SQL, immutable receipt/job binding, and indefinite receipt
   retention across queue purge/ID reuse. See [adoption instructions](docs/upgrade.md).
-- Real-DB transaction/fault/concurrency coverage and required MySQL checks in PHP 8.2/8.3/8.4 CI.
+- Real-DB transaction/fault/concurrency coverage and required MySQL checks in PHP 8.2/8.3/8.4/8.5 CI.
 - Consolidated [keyed API reference](docs/reference/idempotency.md), reusable dependency-injected
   examples, truthful security architecture description, diagrams and next-release preparation guide.
 
@@ -20,6 +20,7 @@ publish a version. See [release preparation](docs/release-preparation.md).
   of PHP/PDO local zones (F5-01). Legacy NULL-token/pre-003 rows retain their prior clock behavior.
 
 ### Compatibility and limits
+- PHP 8.5 joins the required CI matrix; the package requirement remains `^8.2` and Composer platform remains `8.2.0`.
 - Adopt schema before keyed callers; no synthetic identities/backfill for legacy jobs.
 - Queue acceptance is not exactly-once SMTP or mailbox delivery. No automatic interrupted-processing
   recovery or receipt pruner is added. Existing retry delays/cap and SMTP policy remain.

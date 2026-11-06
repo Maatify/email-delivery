@@ -23,7 +23,7 @@ composer test
 composer analyse -- --memory-limit=512M
 ```
 
-Run the configured PHP 8.2/8.3/8.4 matrix with a real MySQL fixture; verify MariaDB behavior when claiming
+Run the configured PHP 8.2/8.3/8.4/8.5 matrix with a real MySQL fixture; verify MariaDB behavior when claiming
 compatibility. Set `EMAIL_DELIVERY_IT_REQUIRED=1` and an explicitly isolated `_test` DSN/user/password.
 The tests own/drop their tables. Also run the default suite without DB configuration to verify safe skips.
 Preserve actual logs, candidate SHA and counts; a configured CI job or billing-blocked run is not a pass.
