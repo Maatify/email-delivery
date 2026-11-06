@@ -23,7 +23,7 @@ composer test
 composer analyse -- --memory-limit=512M
 ```
 
-Run the configured PHP 8.2/8.3/8.4 matrix with a real MySQL fixture; verify MariaDB behavior when claiming
+Run the configured PHP 8.2/8.3/8.4/8.5 matrix with a real MySQL fixture; verify MariaDB behavior when claiming
 compatibility. Set `EMAIL_DELIVERY_IT_REQUIRED=1` and an explicitly isolated `_test` DSN/user/password.
 The tests own/drop their tables. Also run the default suite without DB configuration to verify safe skips.
 Preserve actual logs, candidate SHA and counts; a configured CI job or billing-blocked run is not a pass.
@@ -38,6 +38,26 @@ Never send real SMTP or use production credentials for release tests.
 - Parse/render the SVG assets and inspect labels, state transitions and clock/acceptance boundaries.
 - Compare constructors, ports, schema paths and error names to the candidate source.
 - Verify no unchanged security-support/reporting policy or historical ADR was accidentally rewritten.
+
+## Release readiness tracking and qualification
+
+[Issue #7](https://github.com/Maatify/email-delivery/issues/7) tracks the outstanding release-facing
+files, canonical consumer entry points and artifact-verification work found against the
+[presentation standard](https://github.com/Maatify/php-engineering-standards/blob/698b0735c58ee388d650542336989b90e06d7003/standards/packages/LIBRARY_PRESENTATION_STANDARD.md).
+README visual alignment and passing quality CI do not complete those release-readiness requirements.
+Resolve the applicable items before publishing the next version; no exact target has been selected yet.
+
+For an approved exact target, allocate its implemented changes to an undated target section in
+CHANGELOG, and align artifact identity/install instructions, SECURITY lifecycle wording, VERSION,
+Composer and distributed consumer files without claiming pre-publication availability. After approved
+integration, use the actual main SHA for both Full Applicable CI and Release Artifact Verification.
+Only that same qualified SHA may receive the separately authorized tag/release. A later candidate
+commit needs its own qualification; a passing branch run is not evidence for another SHA.
+
+After exact-version external publication, verify the installed artifact from a clean Composer root
+and independently refresh any live repository publication facts that became stale. Artifact-integrity
+verification and publication-state freshness are separate checks. Keep existing published release
+identities immutable; tracked artifact corrections require a new release identity.
 
 ## Maintainer publication handoff
 
