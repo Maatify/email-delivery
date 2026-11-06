@@ -1,6 +1,6 @@
 # ADR-011: Isolated synthetic email recording
 
-Status: implemented in development, unreleased. Scope: email-delivery #8; service study channel-delivery #5 remains separate.
+Status: implemented and published in 1.2.0; see [publication record](releases/1.2.0-publication.md). Scope: email-delivery #8; service study channel-delivery #5 remains separate.
 
 ## Context and decision
 

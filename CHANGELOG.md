@@ -7,9 +7,9 @@ Published dates below use the corresponding GitHub Release publication date in U
 
 ## [Unreleased]
 
-## [1.2.0]
+<a id="120"></a>
 
-Prepared target; not yet published. No release date is assigned during preparation.
+## [1.2.0] - 2026-11-06
 
 ### Added
 - Complete consumer reference, canonical usage guide/root examples, contribution/conduct files and llms.txt.
@@ -62,7 +62,8 @@ Prepared target; not yet published. No release date is assigned during preparati
 - Encryption support for queue payloads via `maatify/crypto`.
 - Worker retry mechanism with exponential backoff for transient and permanent failures.
 
-[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.2.0
 [1.1.1]: https://github.com/Maatify/email-delivery/releases/tag/v1.1.1
 [1.1.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.0.0

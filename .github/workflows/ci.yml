@@ -111,6 +111,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: shivammathur/setup-php@v2
         with:
           php-version: "8.5"
@@ -131,6 +133,8 @@ jobs:
           path: |
             ${{ runner.temp }}/email-release-evidence/*.json
             ${{ runner.temp }}/email-release-evidence/*.log
+            ${{ runner.temp }}/email-release-evidence/qualified-artifact/artifact-verification.json
+            ${{ runner.temp }}/email-release-evidence/qualified-artifact/*.log
           if-no-files-found: error
           retention-days: 30
       - name: Retain verified archives only after successful verification
@@ -138,7 +142,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: email-release-archives-${{ github.sha }}
-          path: ${{ runner.temp }}/email-release-evidence/*-candidate.zip
+          path: |
+            ${{ runner.temp }}/email-release-evidence/*-candidate.zip
+            ${{ runner.temp }}/email-release-evidence/qualified-artifact/*-candidate.zip
           if-no-files-found: error
           retention-days: 30
 
@@ -156,4 +162,4 @@ jobs:
         run: |
           test "$QUALITY_RESULT" = success
           test "$ARTIFACT_RESULT" = success
-          echo "Full Applicable CI and Release Artifact Verification passed on $CANDIDATE_SHA. Owner review, main-SHA qualification and publication authorization remain separate."
+          echo "Quality and artifact gates passed for workflow SHA $CANDIDATE_SHA. Read the artifact mode: published-target checks preserve the original qualified tag and do not qualify this live SHA for retagging."

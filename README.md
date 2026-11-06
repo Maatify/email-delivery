@@ -21,11 +21,13 @@ transport through PHPMailer. Applications enqueue work; a separately run worker 
 
 ---
 
-Release artifact target: **1.2.0** (Stable lifecycle target). The publication snapshot prepared for
-qualification records **1.2.0 as unpublished**, with **v1.1.1 as the published baseline observed on
-2026-11-06 UTC**. The registry badges display live distribution state; they do not identify this
-artifact as v1.1.1 or prove that target 1.2.0 has been published. Preparation does not establish
-release qualification, publication or approval to tag.
+Release artifact target: **1.2.0**. Publication state: **published**.
+[Version 1.2.0](https://github.com/Maatify/email-delivery/releases/tag/v1.2.0) was published on
+2026-11-06 UTC and verified as an exact Composer dist installation. Its immutable qualified source is
+`8e0fc1e2995fb52d1e0e5e299eea2203ccd56c2d`.
+
+The tagged artifact retains its historically valid pre-publication qualification snapshot. This live
+repository records later publication facts; it does not replace the tag or change the distributed artifact.
 
 ## Start here
 
@@ -72,9 +74,8 @@ DTO fields, enum values, exceptions and behavioral boundaries. Internal helpers 
 composer require maatify/email-delivery:1.2.0
 ```
 
-This is the exact installation target for this artifact. It resolves through Packagist **only after
-1.2.0 is published**; preparation is not external availability. For the currently published Stable
-line independently of this target, use `composer require maatify/email-delivery`.
+This exact version is available through Packagist. To follow the current Stable line, use
+`composer require maatify/email-delivery`.
 
 The package requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer and PSR-3 logging.
 The production keyed and synthetic storage paths use MySQL/MariaDB with `pdo_mysql` and the package-owned

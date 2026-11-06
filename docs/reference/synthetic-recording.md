@@ -2,9 +2,9 @@
 
 [Documentation](../README.md) · [Schema adoption](../upgrade.md#optional-synthetic-recording) · [Example](../examples/synthetic-email.php)
 
-Development feature for [email-delivery #8](https://github.com/Maatify/email-delivery/issues/8),
+Introduced in 1.2.0 for [email-delivery #8](https://github.com/Maatify/email-delivery/issues/8),
 the reusable storage slice of [channel-delivery #5](https://github.com/Maatify/channel-delivery/issues/5).
-It is **not published in v1.1.1**. Service HTTP behavior and timing measurements remain separate work.
+It is available in **v1.2.0**, and was not part of v1.1.1. Service HTTP behavior and timing measurements remain separate work.
 
 ## Contract
 

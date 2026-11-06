@@ -1,18 +1,19 @@
-# Prepare and verify release 1.2.0
+# Release 1.2.0 verification and workflow
 
 [Documentation](README.md) · [Package Reference](reference/PACKAGE_REFERENCE.md) · [Target changelog](../CHANGELOG.md#120)
 
-The owner selected **1.2.0 for preparation only**. The current tree is not a publication statement or
-merge/tag authorization. This package already has a published Stable 1.x line; a first-Stable RC/two-host
-sequence is not retroactively imposed on this minor release. [Issue #7](https://github.com/Maatify/email-delivery/issues/7)
-remains the tracker through qualification and post-publication verification.
+Version 1.2.0 has been published and externally installed as dist. Its qualified immutable source is
+`8e0fc1e2995fb52d1e0e5e299eea2203ccd56c2d`; see the [publication record](releases/1.2.0-publication.md).
+The workflow below records the preparation/qualification boundaries and remains the operational guide.
+No future release is authorized by the completed 1.2.0 publication. This package already had Stable 1.x;
+the first-Stable RC/two-host sequence does not apply retroactively.
 
 ## Candidate content
 
 `release-target.json`, VERSION, README artifact identity and exact install command, undated 1.2.0
 CHANGELOG allocation and SECURITY lifecycle wording identify the same target. Published1.x support
 remains unchanged. The published baseline observed during preparation was v1.1.1; registry badges
-show live facts. No prepared target is presented as externally available. The canonical consumer
+show live facts. A future prepared target must not be presented as externally available. The canonical consumer
 entry points are the Package Reference, Usage Guide, root examples and llms.txt.
 
 Review [1.2.0 semantic evidence](releases/1.2.0-review.md), [schema adoption](upgrade.md), real receipt/key
@@ -88,7 +89,7 @@ and compares every installed file against an independent Git export of the quali
 files or bytes fail. No source-only delivery exception is selected for this package.
 
 Retain installed metadata/reference, manifest/file hashes and logs. A local archive install or runtime
-harness does not substitute for this post-publication integrity evidence. Until it runs, PAV is NOT RUN.
+harness does not substitute for this post-publication integrity evidence. The 1.2.0 run passed; for any future target PAV remains NOT RUN until its own external verification.
 A failure makes integrity NOT PASS; it does not itself erase separately proven external availability.
 Conflicting availability evidence requires canonical publication-state re-verification.
 
@@ -98,3 +99,12 @@ compare base and any stale current publication text. Dynamic registry badges nee
 replacement. Preserve historical qualification snapshots. Never retag/rewrite the immutable artifact
 to add later publication facts; any tracked artifact correction needs a new version. Close #7 only
 when applicable main-SHA qualification and post-publication evidence/freshness are complete.
+
+
+## Live checks after publication
+
+When `publication_state_current` is published, `check:artifact` validates live publication identity and
+rechecks the **original qualified tag**, using that tag's own archive-verification command in a temporary
+owned independent clone. It never qualifies the later live-documentation SHA as a replacement 1.2.0 artifact.
+The report separates live SHA from qualified SHA. For another release, choose a new exact target and
+return to the unpublished candidate path. The release artifact itself is never rewritten.

@@ -10,7 +10,8 @@ require_once __DIR__ . '/lib.php';
 /** @return list<string> */
 function anchors(string $markdown): array
 {
-    $anchors = [];
+    preg_match_all('/<a\s+id="([^"]+)"\s*><\/a>/', $markdown, $explicit);
+    $anchors = $explicit[1];
     $counts = [];
     $fenced = false;
     foreach (explode("\n", $markdown) as $line) {

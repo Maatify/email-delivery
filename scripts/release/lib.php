@@ -181,16 +181,35 @@ function verifyIdentity(string $root, string $version): void
     $readme = read($root . '/README.md');
     ensure(str_contains($readme, 'Release artifact target: **' . $version . '**'), 'README lacks exact artifact identity.');
     ensure(str_contains($readme, 'composer require maatify/email-delivery:' . $version), 'README lacks exact installation target.');
-    ensure(str_contains($readme, 'unpublished') && str_contains($readme, 'only after'), 'Missing pre-publication installation boundary.');
+    $publicationState = $target['publication_state_current'] ?? 'unpublished';
+    ensure(in_array($publicationState, ['unpublished', 'published'], true), 'Unknown publication state.');
+    $published = $publicationState === 'published';
+    if (!$published) {
+        ensure(str_contains($readme, 'unpublished') && str_contains($readme, 'only after'), 'Missing pre-publication installation boundary.');
+    } else {
+        ensure(str_contains($readme, 'Publication state: **published**'), 'Live README must report publication explicitly.');
+    }
     ensure(str_contains($readme, '## Public Runtime API'), 'Missing README API overview.');
     $changelog = read($root . '/CHANGELOG.md');
-    ensure(str_contains($changelog, '## [' . $version . "]\n"), 'Missing undated exact-target changelog section.');
-    ensure(!str_contains($changelog, 'releases/tag/v' . $version), 'Unpublished target must not link to a nonexistent release.');
-    $parts = explode('## [' . $version . ']', $changelog, 2);
-    ensure(preg_match('/^### /m', $parts[0]) !== 1, 'Allocated changes remain under Unreleased.');
+    if (!$published) {
+        ensure(str_contains($changelog, '## [' . $version . "]\n"), 'Missing undated exact-target changelog section.');
+        ensure(!str_contains($changelog, 'releases/tag/v' . $version), 'Unpublished target must not link to a nonexistent release.');
+        $parts = explode('## [' . $version . ']', $changelog, 2);
+        ensure(preg_match('/^### /m', $parts[0]) !== 1, 'Allocated changes remain under Unreleased.');
+    } else {
+        $publishedAt = $target['published_at'] ?? null;
+        ensure(is_string($publishedAt), 'Published timestamp is required.');
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s\Z', $publishedAt, new \DateTimeZone('UTC'));
+        ensure($date !== false && $date->format('Y-m-d\TH:i:s\Z') === $publishedAt, 'Invalid actual publication timestamp.');
+        ensure(str_contains($changelog, '## [' . $version . '] - ' . $date->format('Y-m-d')), 'Live changelog needs the actual publication date.');
+        ensure(str_contains($changelog, '[' . $version . ']: https://github.com/Maatify/email-delivery/releases/tag/v' . $version), 'Live release link is missing.');
+        $qualified = $target['qualified_sha'] ?? null;
+        ensure(is_string($qualified) && preg_match('/\A[a-f0-9]{40}\z/', $qualified) === 1, 'Qualified immutable SHA required.');
+        ensure(($target['publication_evidence_url'] ?? null) === 'https://github.com/Maatify/email-delivery/releases/download/v' . $version . '/publication-verification.json', 'Exact external publication evidence is required.');
+    }
     $security = read($root . '/SECURITY.md');
     ensure(str_contains($security, '**' . $version . '**') && str_contains($security, '| 1.x'), 'Security identity/support is inconsistent.');
-    ensure(str_contains($security, 'unpublished') && str_contains($security, 'security@maatify.dev'), 'Security lifecycle/reporting mismatch.');
+    ensure(str_contains($security, $published ? '**published**' : 'unpublished') && str_contains($security, 'security@maatify.dev'), 'Security lifecycle/reporting mismatch.');
     foreach (['docs/guides/USAGE_GUIDE.md', 'docs/reference/PACKAGE_REFERENCE.md', 'examples/README.md', 'llms.txt', 'CONTRIBUTING.md', 'CODE_OF_CONDUCT.md', 'LICENSE'] as $file) {
         ensure(is_file($root . '/' . $file), 'Required consumer file missing: ' . $file);
     }
@@ -256,4 +275,15 @@ function verifyInstalledMetadata(array $installed, string $version, string $sha)
     ensure(is_array($source) && ($source['reference'] ?? null) === $sha, 'Source reference differs from qualified SHA.');
     /** @var array<string, mixed> $resolved */
     return $resolved;
+}
+
+
+/** @param array<string, mixed> $report */
+function verifyFrozenReport(array $report, string $version, string $qualified): void
+{
+    ensure(($report['target'] ?? null) === $version && ($report['candidate_sha'] ?? null) === $qualified,
+        'Frozen report must identify the qualified release, not the live reconciliation SHA.');
+    ensure(($report['outcome'] ?? null) === 'PASS' && ($report['mode'] ?? null) === 'committed-candidate'
+        && ($report['git_archive_verified'] ?? null) === true && ($report['archive_production_autoload'] ?? null) === 'PASS',
+        'Frozen artifact recheck is incomplete.');
 }

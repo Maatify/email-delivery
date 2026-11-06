@@ -5,9 +5,9 @@
 
 ## Artifact identity
 
-This tree prepares **1.2.0**, a Stable lifecycle target. The publication snapshot prepared for
-qualification records this target as **unpublished**. This does not establish release qualification
-or a new supported release line. The table below describes support for actually published versions.
+Version **1.2.0** is **published** within the supported 1.x line. Its tagged artifact preserves the
+historical pre-publication snapshot recorded during qualification. Publication does not change the
+security reporting route or create a different support policy.
 
 ## Supported Versions
 
