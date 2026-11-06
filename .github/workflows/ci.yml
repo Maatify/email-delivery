@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main, dev ]
 
+permissions:
+  contents: read
+
 jobs:
   quality:
     name: Quality Checks (PHP ${{ matrix.php }})
@@ -53,7 +56,7 @@ jobs:
           php-version: ${{ matrix.php }}
           tools: composer
           coverage: none
-          extensions: pdo_mysql, pdo_sqlite, mbstring, openssl
+          extensions: pdo_mysql, pdo_sqlite, mbstring, openssl, zip
           ini-values: memory_limit=512M
 
       # -------------------------------------------------
@@ -89,9 +92,68 @@ jobs:
       - name: Run PHPStan
         run: composer analyse
 
+      - name: Validate consumer documentation and API inventory
+        run: composer check:docs
+
+      - name: Smoke-check safe consumer examples
+        run: composer check:examples
+
       # -------------------------------------------------
       # 8) Syntax Check (extra safety)
       # -------------------------------------------------
       - name: Lint PHP files
         run: |
           find . -type f -name "*.php" -not -path "./vendor/*" -print0 | xargs -0 -n1 php -l
+  release-artifact:
+    name: Release Artifact Verification
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          tools: composer
+          coverage: none
+          extensions: zip, mbstring, openssl
+      - name: Validate manifest
+        run: composer validate --strict
+      - name: Inspect actual Git and Composer archives and production autoload
+        run: composer check:artifact
+        env:
+          EMAIL_RELEASE_EVIDENCE_DIR: ${{ runner.temp }}/email-release-evidence
+      - name: Retain exact target, candidate SHA and archive evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: email-release-artifact-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/email-release-evidence/*.json
+            ${{ runner.temp }}/email-release-evidence/*.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Retain verified archives only after successful verification
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: email-release-archives-${{ github.sha }}
+          path: ${{ runner.temp }}/email-release-evidence/*-candidate.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  ci-gate:
+    name: CI Gate
+    if: always()
+    needs: [quality, release-artifact]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all gates on this exact workflow SHA
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          ARTIFACT_RESULT: ${{ needs.release-artifact.result }}
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          test "$QUALITY_RESULT" = success
+          test "$ARTIFACT_RESULT" = success
+          echo "Full Applicable CI and Release Artifact Verification passed on $CANDIDATE_SHA. Owner review, main-SHA qualification and publication authorization remain separate."

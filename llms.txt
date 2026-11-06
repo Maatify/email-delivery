@@ -1,0 +1,22 @@
+# Maatify Email Delivery
+
+> A PHP library for encrypted email queues, Twig rendering, SMTP transport and isolated no-send recording.
+
+This map is for consumers integrating `maatify/email-delivery`, not repository contributors.
+The Package Reference owns the supported public/runtime/behavioral contract and complete API inventory;
+the Usage Guide and examples consume it. Composer manifest facts remain owned by `composer.json`.
+Visible in repository != supported consumer contract: internals, undocumented public implementation,
+tests/fixtures, contributor files, AGENTS.md and engineering standards are not consumer API authority.
+Do not infer delivery or timing guarantees from implementation visibility.
+
+## Consumer documentation
+
+- [README](README.md): Overview, installation, Quick Usage and Public Runtime API summary.
+- [Package Reference](docs/reference/PACKAGE_REFERENCE.md): Canonical behavioral contract and complete Public Runtime API inventory.
+- [Usage Guide](docs/guides/USAGE_GUIDE.md): Integration workflows, inputs, results and boundaries.
+- [Examples](examples/README.md): Maintained public-API examples with explicit host prerequisites.
+
+## Release and support
+
+- [Changelog](CHANGELOG.md): Release deltas and history; prepared targets do not imply publication.
+- [Security policy](SECURITY.md): Supported published release lines and private vulnerability reporting.
