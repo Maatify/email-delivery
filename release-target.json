@@ -5,5 +5,9 @@
   "publication_state_at_preparation": "unpublished",
   "published_baseline_observed": "1.1.1",
   "supported_major_line": "1.x",
-  "presentation_standard_ref": "698b0735c58ee388d650542336989b90e06d7003"
+  "presentation_standard_ref": "698b0735c58ee388d650542336989b90e06d7003",
+  "publication_state_current": "published",
+  "published_at": "2026-11-06T20:09:38Z",
+  "qualified_sha": "8e0fc1e2995fb52d1e0e5e299eea2203ccd56c2d",
+  "publication_evidence_url": "https://github.com/Maatify/email-delivery/releases/download/v1.2.0/publication-verification.json"
 }

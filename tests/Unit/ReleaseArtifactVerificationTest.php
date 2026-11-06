@@ -11,6 +11,7 @@ use ZipArchive;
 
 use function Maatify\EmailDelivery\ReleaseTools\requiredFiles;
 use function Maatify\EmailDelivery\ReleaseTools\verifyIdentity;
+use function Maatify\EmailDelivery\ReleaseTools\verifyFrozenReport;
 use function Maatify\EmailDelivery\ReleaseTools\verifyInstalledMetadata;
 use function Maatify\EmailDelivery\ReleaseTools\verifyZip;
 
@@ -34,6 +35,20 @@ final class ReleaseArtifactVerificationTest extends TestCase
                 throw new RuntimeException('Cannot copy owned verifier fixture.');
             }
         }
+        $metadata = json_decode((string) file_get_contents($this->directory . '/release-target.json'), true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($metadata);
+        unset($metadata['publication_state_current']);
+        file_put_contents($this->directory . '/release-target.json', json_encode($metadata, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
+        $readme = (string) file_get_contents($this->directory . '/README.md');
+        $readme = str_replace('Publication state: **published**', 'Publication state at preparation: unpublished; install only after publication', $readme);
+        file_put_contents($this->directory . '/README.md', $readme);
+        $changelog = (string) file_get_contents($this->directory . '/CHANGELOG.md');
+        $changelog = str_replace('## [1.2.0] - 2026-11-06', '## [1.2.0]', $changelog);
+        $changelog = preg_replace('/^\[1\.2\.0\]:.*\n/m', '', $changelog);
+        file_put_contents($this->directory . '/CHANGELOG.md', $changelog);
+        $security = (string) file_get_contents($this->directory . '/SECURITY.md');
+        file_put_contents($this->directory . '/SECURITY.md', str_replace('**published**', '**unpublished**', $security));
+
     }
 
     protected function tearDown(): void
@@ -154,5 +169,59 @@ final class ReleaseArtifactVerificationTest extends TestCase
         $valid[$field] = $value;
         $this->expectException(RuntimeException::class);
         verifyInstalledMetadata(['packages' => [$valid]], '1.2.0', str_repeat('a', 40));
+    }
+
+    public function testActualPublishedLiveIdentityIsValidWithoutRewritingTheTagSnapshot(): void
+    {
+        verifyIdentity(dirname(__DIR__, 2), '1.2.0');
+        self::assertTrue(true);
+    }
+
+    /** @return iterable<string, array{string, mixed}> */
+    public static function invalidFrozenEvidence(): iterable
+    {
+        yield 'later live SHA' => ['candidate_sha', str_repeat('b', 40)];
+        yield 'wrong version' => ['target', '1.2.1'];
+        yield 'rehearsal' => ['mode', 'dirty-worktree-rehearsal'];
+        yield 'missing archive check' => ['git_archive_verified', false];
+        yield 'failed production autoload' => ['archive_production_autoload', 'FAIL'];
+    }
+
+    #[DataProvider('invalidFrozenEvidence')]
+    public function testLiveReconciliationCannotReplaceQualifiedReleaseEvidence(string $field, mixed $value): void
+    {
+        $report = ['target' => '1.2.0', 'candidate_sha' => str_repeat('a', 40), 'outcome' => 'PASS',
+            'mode' => 'committed-candidate', 'git_archive_verified' => true, 'archive_production_autoload' => 'PASS'];
+        verifyFrozenReport($report, '1.2.0', str_repeat('a', 40));
+        $report[$field] = $value;
+        $this->expectException(RuntimeException::class);
+        verifyFrozenReport($report, '1.2.0', str_repeat('a', 40));
+    }
+
+    /** @return iterable<string, array{string, string, string}> */
+    public static function invalidPublishedIdentity(): iterable
+    {
+        yield 'unknown state' => ['release-target.json', '"publication_state_current": "published"', '"publication_state_current": "unknown"'];
+        yield 'invalid actual date' => ['release-target.json', '2026-11-06T20:09:38Z', '2026-02-31T20:09:38Z'];
+        yield 'stale live date' => ['CHANGELOG.md', '## [1.2.0] - 2026-11-06', '## [1.2.0] - 2026-11-05'];
+        yield 'missing release link' => ['CHANGELOG.md', '[1.2.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.2.0', '[1.2.0]: https://example.invalid'];
+        yield 'missing publication evidence' => ['release-target.json', 'publication-verification.json', 'missing-evidence.json'];
+        yield 'stale live README' => ['README.md', 'Publication state: **published**', 'Publication state: pending'];
+    }
+
+    #[DataProvider('invalidPublishedIdentity')]
+    public function testPublishedLiveFactsMustMatchEvidenceAndActualDate(string $path, string $before, string $after): void
+    {
+        foreach (['release-target.json', 'README.md', 'CHANGELOG.md', 'SECURITY.md'] as $file) {
+            if (!copy(dirname(__DIR__, 2) . '/' . $file, $this->directory . '/' . $file)) {
+                throw new RuntimeException('Cannot restore published fixture.');
+            }
+        }
+        verifyIdentity($this->directory, '1.2.0');
+        $content = (string) file_get_contents($this->directory . '/' . $path);
+        self::assertStringContainsString($before, $content, 'Published mutation must hit the real field.');
+        file_put_contents($this->directory . '/' . $path, str_replace($before, $after, $content));
+        $this->expectException(RuntimeException::class);
+        verifyIdentity($this->directory, '1.2.0');
     }
 }

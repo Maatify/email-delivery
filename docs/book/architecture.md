@@ -26,8 +26,7 @@ lost acknowledgement can be ambiguous. The library does not guarantee exactly-on
 automatic `processing` recovery. See [worker](worker.md) and [retry limits](retry-mechanism.md).
 
 [ADR-008](../ADR-008-Email-Delivery-Independent-Queue.md) is the historical locked independent-channel
-decision. [ADR-010](../ADR-010-Idempotent-Email-Enqueue.md) describes its implemented, unreleased
-keyed storage extension; it does not move notification orchestration into this library.
+decision. [ADR-010](../ADR-010-Idempotent-Email-Enqueue.md) describes the keyed storage extension published in 1.2.0; it does not move notification orchestration into this library.
 
 Synthetic storage is a separate optional path, outside both delivery-flow diagrams above. See
 [ADR-011](../ADR-011-Synthetic-Email-Recording.md) and the [contract](../reference/synthetic-recording.md).

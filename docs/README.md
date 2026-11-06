@@ -1,7 +1,7 @@
 # Documentation
 
-This documentation describes the current development implementation; [prepared 1.2.0 target](../CHANGELOG.md#120)
-features are not a claim that a package version has been published.
+This documentation describes the published [1.2.0 release](../CHANGELOG.md#120).
+See the [publication record](releases/1.2.0-publication.md) for qualification and Composer integrity evidence.
 
 ## Canonical consumer entry points
 
@@ -27,7 +27,7 @@ features are not a claim that a package version has been published.
 - [Security architecture description](../SECURITY_AUDIT.md) and [reporting policy](../SECURITY.md)
 - [Historical ADR-008](ADR-008-Email-Delivery-Independent-Queue.md): locked independent-channel decision
 - [ADR-011](ADR-011-Synthetic-Email-Recording.md): isolated synthetic recording without delivery
-- [ADR-010](ADR-010-Idempotent-Email-Enqueue.md): implemented development extension for keyed acceptance
+- [ADR-010](ADR-010-Idempotent-Email-Enqueue.md): extension published in 1.2.0 for keyed acceptance
 
 The idempotency reference owns the detailed request/receipt rules. The upgrade guide owns SQL adoption.
 Other pages link to those contracts rather than define alternative retry, retention or authentication policy.

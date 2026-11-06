@@ -15,5 +15,5 @@ the application supervisor. No built-in daemon, HTTP endpoint, receipt-retention
 `processing` reclaimer is supplied. Queue acceptance and SMTP/mailbox delivery are different facts.
 
 Start with [schema adoption](../upgrade.md), then [enqueue](../how-to/send-email.md) and
-[worker composition](../how-to/setup-worker.md). Development features are listed under
-[prepared 1.2.0 target](../../CHANGELOG.md#120); this guide does not announce a package version.
+[worker composition](../how-to/setup-worker.md). Release additions are listed under [1.2.0](../../CHANGELOG.md#120);
+[publication evidence](../releases/1.2.0-publication.md) is recorded separately.

@@ -1,6 +1,6 @@
 # ADR-010: Durable Idempotent Email Enqueue
 
-**Status:** IMPLEMENTED IN DEVELOPMENT / UNRELEASED; technical implementation approved, release separate
+**Status:** IMPLEMENTED / PUBLISHED IN 1.2.0; see [publication record](releases/1.2.0-publication.md)
 
 **Date:** 2026-11-06
 
@@ -40,5 +40,5 @@ not authentication. External transport ambiguity and jobs left `processing` need
 policy; this package does not close those gaps with a new key, automated reset or mailbox guarantee.
 
 [Release preparation](release-preparation.md) requires candidate verification and an explicit maintainer
-version/publication decision. Implemented/unreleased is not an independent audit, CI certificate or
-statement that a published package already contains this work.
+version/publication decision. This extension was published in 1.2.0 after qualification; that fact
+is not an independent audit or a guarantee of SMTP/mailbox delivery.

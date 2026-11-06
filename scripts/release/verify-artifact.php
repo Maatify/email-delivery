@@ -8,13 +8,19 @@ require_once __DIR__ . '/lib.php';
 try {
     $directory = evidenceDirectory('email-artifact');
     $root = dirname(__DIR__, 2);
-    $target = jsonFile($root . '/release-target.json')['target'] ?? null;
+    $targetMetadata = jsonFile($root . '/release-target.json');
+    $target = $targetMetadata['target'] ?? null;
     ensure(is_string($target), 'Exact release target is required.');
     $allowDirty = in_array('--allow-dirty', $argv ?? [], true);
     $dirty = trim(run(['git', 'status', '--porcelain'], $root)) !== '';
     ensure(!$dirty || $allowDirty, 'Commit the candidate first, or explicitly use --allow-dirty for a non-qualifying rehearsal.');
     verifyIdentity($root, $target);
     $sha = trim(run(['git', 'rev-parse', 'HEAD'], $root));
+    if (($targetMetadata['publication_state_current'] ?? 'unpublished') === 'published') {
+        require_once __DIR__ . '/verify-published-snapshot.php';
+        verifyPublishedSnapshot($root, $directory, $target, $sha, $dirty);
+        exit(0);
+    }
     $environment = controlledEnvironment($directory);
     $required = requiredFiles($root);
     $composerOutput = run(['composer', 'archive', '--format=zip', '--dir=' . $directory, '--file=composer-candidate', '--no-plugins', '--no-scripts', '--no-interaction'], $root, $environment);

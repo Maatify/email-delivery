@@ -3,7 +3,7 @@
 [Usage Guide](../guides/USAGE_GUIDE.md) · [Examples](../../examples/README.md) · [Schema adoption](../upgrade.md)
 
 This is the canonical supported public/runtime/behavioral reference and complete Public Runtime API
-inventory for this package. It describes the prepared **1.2.0** artifact, not proof of publication.
+inventory for this package. It describes the published **1.2.0** contract; [publication evidence](../releases/1.2.0-publication.md) is separate from this API reference.
 Exact package/dependency/platform/autoload facts remain owned by [composer.json](../../composer.json).
 The specialized [keyed reference](idempotency.md) and [synthetic reference](synthetic-recording.md)
 are normative constituent chapters of this reference within their named scopes; their detailed rules
