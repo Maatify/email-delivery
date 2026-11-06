@@ -34,3 +34,19 @@ The retry logic is designed using an exponential backoff strategy:
 2.  More persistent errors (like encryption issues or template rendering failures) trigger longer delays between retries, giving administrators time to correct the underlying problem without overwhelming the system.
 
 After a defined maximum number of attempts (defaulting to 4), the worker marks the email as permanently `failed`, recording the `last_error` for later inspection.
+
+## Explicit request identity and durable receipts (unreleased)
+
+The additive `PdoIdempotentEmailQueue` implements `enqueueOnce()` and scoped `find()`; the legacy
+void writer still inserts each call. Apply the package-owned schema upgrade before adoption.
+See the [README](../../README.md#explicit-idempotent-enqueue-unreleased) for complete examples,
+canonical content rules, error handling, connection preconditions and installation order.
+
+Receipt acceptance and queue processing are different facts. A receipt survives deletion of its queue
+job and reports `QueueMissing`; it cannot prove that the worker sent an email. A package-owned nullable
+immutable queue token binds the receipt to the original job even after numeric ID reuse. No receipt
+pruning or automatic retry under a different key is safe under the initial indefinite-retention contract.
+
+Commit failure can be ambiguous. Discard an unresolved connection and use the same namespace/key
+on a fresh one. Do not infer a lost request from a timeout or from an unavailable queue row. This does
+not change worker retries, SMTP behavior, or application-specific notification policy.

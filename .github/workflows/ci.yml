@@ -16,6 +16,27 @@ jobs:
       matrix:
         php: [ "8.2", "8.3", "8.4" ]
 
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: email_delivery_test
+          MYSQL_ROOT_PASSWORD: fixture-email-only
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -pfixture-email-only --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      EMAIL_DELIVERY_IT_DSN: "mysql:host=127.0.0.1;port=3306;dbname=email_delivery_test;charset=utf8mb4"
+      EMAIL_DELIVERY_IT_USER: root
+      EMAIL_DELIVERY_IT_PASS: fixture-email-only
+      EMAIL_DELIVERY_IT_REQUIRED: "1"
+
     steps:
       # -------------------------------------------------
       # 1) Checkout
@@ -32,6 +53,8 @@ jobs:
           php-version: ${{ matrix.php }}
           tools: composer
           coverage: none
+          extensions: pdo_mysql, pdo_sqlite, mbstring, openssl
+          ini-values: memory_limit=512M
 
       # -------------------------------------------------
       # 3) Validate composer.json
@@ -54,7 +77,10 @@ jobs:
       # -------------------------------------------------
       # 6) Run PHPUnit (Unit Tests)
       # -------------------------------------------------
-      - name: Run PHPUnit
+      - name: Verify safe skips without a database configuration
+        run: env -u EMAIL_DELIVERY_IT_DSN -u EMAIL_DELIVERY_IT_REQUIRED composer test
+
+      - name: Run PHPUnit including required real MySQL tests
         run: composer test
 
       # -------------------------------------------------
