@@ -9,6 +9,8 @@ steps. Documentation for development features must not imply they already exist 
 ## Review the contract
 
 - Review the [keyed API reference](reference/idempotency.md) and [ADR-010](ADR-010-Idempotent-Email-Enqueue.md).
+- Verify optional synthetic schema004, real-worker isolation, explicit retention/cleanup, unknown commit behavior,
+  and the absence of constant-time/HTTP guarantee claims. Service study channel-delivery#5 remains separate.
 - Confirm legacy enqueue still creates one job per call; keyed acceptance does not promise exactly-once SMTP.
 - Confirm receipt/key retention, old crypto read keys, plaintext metadata and authenticated namespace ownership.
 - Review [fresh versus upgrade SQL](upgrade.md) with the deployment owner; record migration-before-adoption.

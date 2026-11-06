@@ -26,3 +26,11 @@ Lower numeric priority sorts first, then ID; a batch limit bounds selection, not
 The worker only selects `pending` jobs whose schedule and optional retry deadline are due. Its state
 transition and operational failure boundaries are documented in [worker](worker.md); a receipt is not
 an SMTP delivery receipt or a mechanism to revive `processing` jobs.
+
+
+## Separate inert storage
+
+`PdoSyntheticEmailStore` appends encrypted data to optional `cd_email_synthetic_requests`, never
+`cd_email_queue` or real receipts. Its result has no job/status, and its requested schedule is metadata.
+Only explicit synthetic maintenance deletes its expired records, in bounded batches; the worker is
+unchanged. See [synthetic contract](../reference/synthetic-recording.md) for retention and failure semantics.

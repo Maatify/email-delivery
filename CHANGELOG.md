@@ -8,6 +8,8 @@ Published dates below use the corresponding GitHub Release publication date in U
 ## [Unreleased]
 
 ### Added
+- Optional encrypted no-send recording (#8), distinct synthetic DTO/ports, independent optional schema004,
+  explicit consumer retention and bounded expired-record cleanup. No real jobs/receipts or timing guarantee.
 - Optional explicit namespace/key atomic enqueue, content conflict detection, encrypted logical digest
   and scoped durable receipt lookup (#4). Legacy void enqueue remains one insert per call.
 - Package-owned MySQL/MariaDB fresh/upgrade SQL, immutable receipt/job binding, and indefinite receipt
