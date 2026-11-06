@@ -1,11 +1,25 @@
+<div align="center">
+
 # Maatify Email Delivery
 
-[![CI](https://github.com/Maatify/email-delivery/actions/workflows/ci.yml/badge.svg)](https://github.com/Maatify/email-delivery/actions/workflows/ci.yml)
-[![Packagist](https://img.shields.io/packagist/v/maatify/email-delivery.svg)](https://packagist.org/packages/maatify/email-delivery)
-[![License](https://img.shields.io/github/license/Maatify/email-delivery.svg)](LICENSE)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://www.maatify.dev/company-profile/maatify_logo_white.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://www.maatify.dev/company-profile/maatify_logo_dark.svg">
+  <img alt="Maatify.dev" src="https://www.maatify.dev/company-profile/maatify_logo_dark.svg">
+</picture>
+
+[![Status](https://img.shields.io/badge/Status-Stable-blue)](https://packagist.org/packages/maatify/email-delivery) [![Latest Version](https://img.shields.io/packagist/v/maatify/email-delivery.svg)](https://packagist.org/packages/maatify/email-delivery) [![PHP](https://img.shields.io/badge/PHP-%5E8.2-8892BF)](composer.json) [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE) [![PHPStan](https://img.shields.io/badge/PHPStan-Level%20Max-4E8CAE)](https://github.com/Maatify/email-delivery/actions/workflows/ci.yml) [![CI](https://github.com/Maatify/email-delivery/actions/workflows/ci.yml/badge.svg)](https://github.com/Maatify/email-delivery/actions/workflows/ci.yml)
+
+[![Packagist](https://img.shields.io/badge/Packagist-maatify%2Femail--delivery-F28D1A)](https://packagist.org/packages/maatify/email-delivery) [![Monthly Downloads](https://img.shields.io/packagist/dm/maatify/email-delivery.svg)](https://packagist.org/packages/maatify/email-delivery) [![Total Downloads](https://img.shields.io/packagist/dt/maatify/email-delivery.svg)](https://packagist.org/packages/maatify/email-delivery) [![Maatify Ecosystem](https://img.shields.io/badge/Maatify-Ecosystem-blueviolet)](https://github.com/Maatify) [![Install](https://img.shields.io/badge/Install-Composer-blue)](https://packagist.org/packages/maatify/email-delivery)
+
+[![Documentation](https://img.shields.io/badge/Documentation-Index-blue)](docs/README.md) [![Usage Guide](https://img.shields.io/badge/Usage-Guide-blue)](docs/how-to/README.md) [![Examples](https://img.shields.io/badge/Examples-PHP-blue)](docs/examples/README.md) [![Keyed API Reference](https://img.shields.io/badge/Keyed%20API-Reference-blue)](docs/reference/idempotency.md) [![Changelog](https://img.shields.io/badge/Changelog-View-blue)](CHANGELOG.md) [![Security Policy](https://img.shields.io/badge/Security-Policy-important)](SECURITY.md)
 
 A framework-independent PHP library for an encrypted email queue, Twig HTML rendering and SMTP
 transport through PHPMailer. Applications enqueue work; a separately run worker attempts delivery.
+
+</div>
+
+---
 
 These pages describe the development checkout. Features in [Unreleased](CHANGELOG.md#unreleased),
 including keyed enqueue, require a release containing them. This documentation update does not
@@ -111,4 +125,18 @@ See the [release checklist](docs/release-preparation.md) for evidence and docume
 
 ## License
 
-[MIT](LICENSE). Vulnerability reports follow [SECURITY.md](SECURITY.md).
+This library is licensed under the [MIT License](LICENSE). Vulnerability reports follow [SECURITY.md](SECURITY.md).
+
+## Author
+
+Engineered by **Mohamed Abdulalim** ([@megyptm](https://github.com/megyptm))<br>
+Backend Lead & Technical Architect<br>
+[https://www.maatify.dev](https://www.maatify.dev)
+
+---
+
+<div align="center">
+
+[Built with ❤️ by Maatify.dev — Unified Ecosystem for Modern PHP Libraries](https://www.maatify.dev)
+
+</div>

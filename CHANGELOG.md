@@ -3,6 +3,7 @@
 Changes follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). This file's Unreleased section does not
 publish a version. See [release preparation](docs/release-preparation.md).
+Published dates below use the corresponding GitHub Release publication date in UTC.
 
 ## [Unreleased]
 
@@ -44,7 +45,7 @@ publish a version. See [release preparation](docs/release-preparation.md).
 - `EmailQueuePayloadDTO::toArray()` now includes `replyTo` key (null when not set).
 - Existing payloads without `replyTo` are handled gracefully via `?? null` (backward compatible).
 
-## [1.0.0] - 2026-03-11
+## [1.0.0] - 2026-03-12
 
 ### Added
 - Queue system using PDO for durable email storage.
@@ -52,3 +53,8 @@ publish a version. See [release preparation](docs/release-preparation.md).
 - SMTP transport implementation backed by PHPMailer.
 - Encryption support for queue payloads via `maatify/crypto`.
 - Worker retry mechanism with exponential backoff for transient and permanent failures.
+
+[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/Maatify/email-delivery/releases/tag/v1.1.1
+[1.1.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.1.0
+[1.0.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.0.0
