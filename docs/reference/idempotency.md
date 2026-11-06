@@ -3,7 +3,7 @@
 [Documentation](../README.md) · [Upgrade](../upgrade.md) · [Typed examples](../examples/README.md)
 
 This additive API is implemented in the development checkout and documented under
-[Unreleased](../../CHANGELOG.md#unreleased). Legacy `enqueue(): void` deliberately continues to insert
+[prepared 1.2.0 target](../../CHANGELOG.md#120). Legacy `enqueue(): void` deliberately continues to insert
 on each call. There is no content-only deduplication or backfill of legacy jobs.
 
 ## Ports and construction

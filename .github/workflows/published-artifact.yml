@@ -1,0 +1,50 @@
+name: Published Artifact Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact externally published Stable version
+        required: true
+        type: string
+      qualified_sha:
+        description: Full release-qualified main commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.qualified_sha }}
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          tools: composer
+          coverage: none
+          extensions: zip, mbstring, openssl
+      - name: Install exact external version and inspect observed dist and all bytes
+        env:
+          EXACT_VERSION: ${{ inputs.version }}
+          QUALIFIED_SHA: ${{ inputs.qualified_sha }}
+          EMAIL_RELEASE_EVIDENCE_DIR: ${{ runner.temp }}/email-published-evidence
+        run: composer verify:published -- --version="$EXACT_VERSION" --sha="$QUALIFIED_SHA"
+      - name: Retain publication integrity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: email-published-artifact-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/email-published-evidence/*.json
+            ${{ runner.temp }}/email-published-evidence/*.log
+            ${{ runner.temp }}/email-published-evidence/*.txt
+            ${{ runner.temp }}/email-published-evidence/external-consumer/composer.lock
+            ${{ runner.temp }}/email-published-evidence/external-consumer/vendor/composer/installed.json
+          if-no-files-found: error
+          retention-days: 30

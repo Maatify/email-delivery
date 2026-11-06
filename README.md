@@ -12,7 +12,7 @@
 
 [![Packagist](https://img.shields.io/badge/Packagist-maatify%2Femail--delivery-F28D1A)](https://packagist.org/packages/maatify/email-delivery) [![Monthly Downloads](https://img.shields.io/packagist/dm/maatify/email-delivery.svg)](https://packagist.org/packages/maatify/email-delivery) [![Total Downloads](https://img.shields.io/packagist/dt/maatify/email-delivery.svg)](https://packagist.org/packages/maatify/email-delivery) [![Maatify Ecosystem](https://img.shields.io/badge/Maatify-Ecosystem-blueviolet)](https://github.com/Maatify) [![Install](https://img.shields.io/badge/Install-Composer-blue)](https://packagist.org/packages/maatify/email-delivery)
 
-[![Documentation](https://img.shields.io/badge/Documentation-Index-blue)](docs/README.md) [![Usage Guide](https://img.shields.io/badge/Usage-Guide-blue)](docs/how-to/README.md) [![Examples](https://img.shields.io/badge/Examples-PHP-blue)](docs/examples/README.md) [![Keyed API Reference](https://img.shields.io/badge/Keyed%20API-Reference-blue)](docs/reference/idempotency.md) [![Changelog](https://img.shields.io/badge/Changelog-View-blue)](CHANGELOG.md) [![Security Policy](https://img.shields.io/badge/Security-Policy-important)](SECURITY.md)
+[![Documentation](https://img.shields.io/badge/Documentation-Index-blue)](docs/README.md) [![Usage Guide](https://img.shields.io/badge/Usage-Guide-blue)](docs/guides/USAGE_GUIDE.md) [![Examples](https://img.shields.io/badge/Examples-PHP-blue)](examples/README.md) [![Package Reference](https://img.shields.io/badge/Package-Reference-blue)](docs/reference/PACKAGE_REFERENCE.md) [![Keyed API Reference](https://img.shields.io/badge/Keyed%20API-Reference-blue)](docs/reference/idempotency.md) [![Changelog](https://img.shields.io/badge/Changelog-View-blue)](CHANGELOG.md) [![Security Policy](https://img.shields.io/badge/Security-Policy-important)](SECURITY.md)
 
 A framework-independent PHP library for an encrypted email queue, Twig HTML rendering and SMTP
 transport through PHPMailer. Applications enqueue work; a separately run worker attempts delivery.
@@ -21,18 +21,22 @@ transport through PHPMailer. Applications enqueue work; a separately run worker 
 
 ---
 
-These pages describe the development checkout. Features in [Unreleased](CHANGELOG.md#unreleased),
-including keyed enqueue and synthetic recording, require a release containing them. This documentation update does not
-choose a version, publish a package or apply a database migration.
+Release artifact target: **1.2.0** (Stable lifecycle target). The publication snapshot prepared for
+qualification records **1.2.0 as unpublished**, with **v1.1.1 as the published baseline observed on
+2026-11-06 UTC**. The registry badges display live distribution state; they do not identify this
+artifact as v1.1.1 or prove that target 1.2.0 has been published. Preparation does not establish
+release qualification, publication or approval to tag.
 
 ## Start here
 
+- [Usage Guide](docs/guides/USAGE_GUIDE.md) and [root examples](examples/README.md)
+- [Package Reference](docs/reference/PACKAGE_REFERENCE.md) — canonical supported contract and complete API inventory
 - [Documentation map](docs/README.md)
 - [Idempotency and receipt reference](docs/reference/idempotency.md) — the complete keyed API contract
 - [Synthetic no-send recording](docs/reference/synthetic-recording.md) — encrypted inert storage and bounded maintenance
 - [Install or upgrade the schema](docs/upgrade.md) — fresh and existing installations differ
 - [Prepare the next release](docs/release-preparation.md)
-- [Examples](docs/examples/README.md), [how-to guides](docs/how-to/README.md), [architecture book](docs/book/README.md)
+- [Examples](examples/README.md), [how-to guides](docs/how-to/README.md), [architecture book](docs/book/README.md)
 - [Security policy](SECURITY.md) and [security architecture description](SECURITY_AUDIT.md)
 
 ## Choose the enqueue contract
@@ -48,11 +52,29 @@ Keyed enqueue atomically stores a job and its durable receipt. Repeating the sam
 logical content returns the same receipt/job identity. It does **not** guarantee exactly-once SMTP,
 mailbox arrival, or automatic recovery of a worker interrupted after claiming a job.
 
+## Public Runtime API
+
+| Capability | Supported entry points |
+| --- | --- |
+| Per-call queue insertion | `EmailQueueWriterInterface`, `PdoEmailQueueWriter` |
+| Keyed acceptance and scoped observation | `IdempotentEmailQueueWriterInterface`, `EmailEnqueueReceiptReaderInterface`, `PdoIdempotentEmailQueue` |
+| Inert recording and trusted cleanup | `SyntheticEmailRecorderInterface`, `SyntheticEmailMaintenanceInterface`, `PdoSyntheticEmailStore` |
+| Rendering | `EmailRendererInterface`, `TwigEmailRenderer`, payload/rendered DTOs |
+| Explicit SMTP call | `EmailTransportInterface`, `SmtpEmailTransport`, `EmailTransportConfigDTO` |
+| One processing batch | `EmailQueueWorker` |
+
+The [Package Reference](docs/reference/PACKAGE_REFERENCE.md) owns the complete supported inventory,
+DTO fields, enum values, exceptions and behavioral boundaries. Internal helpers are not consumer API.
+
 ## Installation and dependencies
 
 ```bash
-composer require maatify/email-delivery
+composer require maatify/email-delivery:1.2.0
 ```
+
+This is the exact installation target for this artifact. It resolves through Packagist **only after
+1.2.0 is published**; preparation is not external availability. For the currently published Stable
+line independently of this target, use `composer require maatify/email-delivery`.
 
 The package requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer and PSR-3 logging.
 The production keyed and synthetic storage paths use MySQL/MariaDB with `pdo_mysql` and the package-owned
@@ -67,10 +89,10 @@ Synthetic recording uses an optional independent table and separate crypto domai
 explicitly configured by the consumer; cleanup is scheduled externally. It provides no constant-time or
 HTTP security guarantee. See the [full contract](docs/reference/synthetic-recording.md).
 
-## Small enqueue example
+## Quick Usage
 
 This function defines application wiring; including it does not connect or send mail. Its dependencies
-must already be configured. See the [complete examples](docs/examples/README.md) for construction,
+must already be configured. See the [complete examples](examples/README.md) for construction,
 explicit scheduling, receipt lookup and worker composition.
 
 ```php
@@ -121,6 +143,9 @@ legacy tables and does not mutate the session timezone. [Clock and failure detai
 composer validate --strict
 composer test
 composer analyse -- --memory-limit=512M
+composer check:docs
+composer check:examples
+composer check:artifact
 ```
 
 Without DB configuration, real-DB tests skip. CI is configured for PHP 8.2/8.3/8.4/8.5 with required MySQL

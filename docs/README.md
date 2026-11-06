@@ -1,7 +1,13 @@
 # Documentation
 
-This documentation describes the current development implementation; [Unreleased](../CHANGELOG.md#unreleased)
+This documentation describes the current development implementation; [prepared 1.2.0 target](../CHANGELOG.md#120)
 features are not a claim that a package version has been published.
+
+## Canonical consumer entry points
+
+- [Package Reference](reference/PACKAGE_REFERENCE.md): supported behavioral contract and complete Public Runtime API.
+- [Usage Guide](guides/USAGE_GUIDE.md): integration workflows and capability map.
+- [Root examples](../examples/README.md): maintained application-wired examples.
 
 ## Adopt the library
 

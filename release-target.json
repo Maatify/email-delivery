@@ -1,0 +1,9 @@
+{
+  "package": "maatify/email-delivery",
+  "target": "1.2.0",
+  "lifecycle": "stable-target",
+  "publication_state_at_preparation": "unpublished",
+  "published_baseline_observed": "1.1.1",
+  "supported_major_line": "1.x",
+  "presentation_standard_ref": "698b0735c58ee388d650542336989b90e06d7003"
+}

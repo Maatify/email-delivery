@@ -7,7 +7,13 @@ Published dates below use the corresponding GitHub Release publication date in U
 
 ## [Unreleased]
 
+## [1.2.0]
+
+Prepared target; not yet published. No release date is assigned during preparation.
+
 ### Added
+- Complete consumer reference, canonical usage guide/root examples, contribution/conduct files and llms.txt.
+- Separate archive verification and post-publication verification tooling; publication remains owner-controlled.
 - Optional encrypted no-send recording (#8), distinct synthetic DTO/ports, independent optional schema004,
   explicit consumer retention and bounded expired-record cleanup. No real jobs/receipts or timing guarantee.
 - Optional explicit namespace/key atomic enqueue, content conflict detection, encrypted logical digest

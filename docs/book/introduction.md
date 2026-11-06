@@ -16,4 +16,4 @@ the application supervisor. No built-in daemon, HTTP endpoint, receipt-retention
 
 Start with [schema adoption](../upgrade.md), then [enqueue](../how-to/send-email.md) and
 [worker composition](../how-to/setup-worker.md). Development features are listed under
-[Unreleased](../../CHANGELOG.md#unreleased); this guide does not announce a package version.
+[prepared 1.2.0 target](../../CHANGELOG.md#120); this guide does not announce a package version.
