@@ -30,7 +30,8 @@ use Throwable;
  *   payload_iv: string,
  *   payload_tag: string,
  *   payload_key_id: string,
- *   attempts: int|string
+ *   attempts: int|string,
+ *   enqueue_receipt_id?: string|null
  * }
  *
  * @phpstan-type DecodedPayload array{context: array<string, mixed>, templateKey: string, language: string, replyTo?: string|null}
@@ -68,17 +69,23 @@ final readonly class EmailQueueWorker
 
         try {
             $table = self::TABLE;
+            // Discover inside this transaction: no cached capability and no session timezone mutation.
+            $hasBinding = $this->hasReceiptBinding();
+            $bindingColumn = $hasBinding ? ', enqueue_receipt_id' : '';
+            $dueClock = $hasBinding
+                ? 'CASE WHEN enqueue_receipt_id IS NULL THEN NOW() ELSE UTC_TIMESTAMP() END'
+                : 'NOW()';
 
             $stmt = $this->pdo->prepare("
                 SELECT
                     id,
                     recipient_encrypted, recipient_iv, recipient_tag, recipient_key_id,
                     payload_encrypted, payload_iv, payload_tag, payload_key_id,
-                    attempts
+                    attempts$bindingColumn
                 FROM `$table`
                 WHERE status = 'pending'
-                  AND scheduled_at <= NOW()
-                  AND (retry_after IS NULL OR retry_after <= NOW())
+                  AND scheduled_at <= $dueClock
+                  AND (retry_after IS NULL OR retry_after <= $dueClock)
                 ORDER BY priority ASC, id ASC
                 LIMIT :limit
                 FOR UPDATE
@@ -125,6 +132,7 @@ final readonly class EmailQueueWorker
         $id       = (int) $row['id'];
         $attempts = (int) $row['attempts'] + 1;
         $table    = self::TABLE;
+        $keyed    = isset($row['enqueue_receipt_id']);
 
         try {
             // ── Decrypt recipient ─────────────────────────────
@@ -194,8 +202,9 @@ final readonly class EmailQueueWorker
             }
 
             // ── Mark sent ─────────────────────────────────────
+            $sentClock = $keyed ? 'UTC_TIMESTAMP()' : 'NOW()';
             $this->pdo->prepare(
-                "UPDATE `$table` SET status = 'sent', sent_at = NOW() WHERE id = :id"
+                "UPDATE `$table` SET status = 'sent', sent_at = $sentClock WHERE id = :id"
             )->execute(['id' => $id]);
 
             $this->logger->info('Email sent', ['job_id' => $id]);
@@ -237,7 +246,7 @@ final readonly class EmailQueueWorker
                 ]);
             } else {
                 $delaySecs  = $backoff[$attempts] ?? 3600;
-                $retryAfter = date('Y-m-d H:i:s', time() + $delaySecs);
+                $retryAfter = $keyed ? $this->keyedRetryAfter($delaySecs) : date('Y-m-d H:i:s', time() + $delaySecs);
 
                 $this->pdo->prepare("
                     UPDATE `$table`
@@ -255,4 +264,45 @@ final readonly class EmailQueueWorker
             }
         }
     }
+
+    private function hasReceiptBinding(): bool
+    {
+        $table = self::TABLE;
+        $statement = $this->pdo->query("SELECT * FROM `$table` LIMIT 0");
+        if ($statement === false || $statement->columnCount() === 0) {
+            throw new \RuntimeException('Email queue column metadata is unavailable.');
+        }
+        try {
+            $hasBinding = false;
+            for ($index = 0; $index < $statement->columnCount(); ++$index) {
+                $metadata = $statement->getColumnMeta($index);
+                if ($metadata === false) {
+                    throw new \RuntimeException('Email queue column metadata is unavailable.');
+                }
+                $hasBinding = $hasBinding || $metadata['name'] === 'enqueue_receipt_id';
+            }
+            return $hasBinding;
+        } finally {
+            $statement->closeCursor();
+        }
+    }
+
+    private function keyedRetryAfter(int $delaySeconds): string
+    {
+        $statement = $this->pdo->prepare("SELECT DATE_FORMAT(DATE_ADD(UTC_TIMESTAMP(), INTERVAL :delay SECOND), '%Y-%m-%d %H:%i:%s')");
+        if ($statement === false) {
+            throw new \RuntimeException('The keyed email retry clock is unavailable.');
+        }
+        $statement->bindValue(':delay', $delaySeconds, PDO::PARAM_INT);
+        if ($statement->execute() !== true) {
+            throw new \RuntimeException('The keyed email retry clock is unavailable.');
+        }
+        $retryAfter = $statement->fetchColumn();
+        $statement->closeCursor();
+        if (!is_string($retryAfter) || $retryAfter === '') {
+            throw new \RuntimeException('The keyed email retry clock is unavailable.');
+        }
+        return $retryAfter;
+    }
+
 }

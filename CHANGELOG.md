@@ -14,8 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   binding and indefinite receipt retention across queue purge/ID reuse.
 - Real-DB fault/concurrency coverage and required MySQL checks in the PHP 8.2/8.3/8.4 CI matrix.
 
+### Fixed
+- Keyed jobs now use database UTC for worker due/retry selection, retry deadlines and sent timestamps,
+  independent of PHP/PDO local zones (F5-01). Legacy rows and pre-003 tables retain their existing
+  clock behavior; no SMTP/backoff policy changes.
+
 ### Compatibility
-- Legacy void enqueue and worker behavior remain unchanged. Queue acceptance does not promise
+- Legacy void enqueue and NULL-token/pre-003 worker timing remain unchanged. Queue acceptance does not promise
   exactly-once SMTP or mailbox delivery. Adopt the schema before the new API; no version bump or release.
 
 ## [1.0.0] - 2026-03-11

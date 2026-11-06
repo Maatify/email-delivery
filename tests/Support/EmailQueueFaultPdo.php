@@ -23,6 +23,7 @@ final class EmailQueueFaultPdo extends PDO
     public int $commitCalls = 0;
     public int $rollbackCalls = 0;
     public int $executeFaults = 0;
+    public int $workerMetadataFaults = 0;
 
     public function __construct()
     {
@@ -56,6 +57,16 @@ final class EmailQueueFaultPdo extends PDO
         }
         if (str_contains($query, '@@SESSION.autocommit') && $this->mode === 'settings_false') {
             return false;
+        }
+        if (str_starts_with($query, 'SELECT * FROM `cd_email_queue` LIMIT 0')) {
+            if ($this->mode === 'worker_metadata_query_throw') {
+                ++$this->workerMetadataFaults;
+                throw new PDOException('Fixture worker metadata query failure');
+            }
+            if ($this->mode === 'worker_metadata_query_false') {
+                ++$this->workerMetadataFaults;
+                return false;
+            }
         }
         return $fetchMode === null ? parent::query($query) : parent::query($query, $fetchMode, ...$fetchModeArgs);
     }

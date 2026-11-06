@@ -12,6 +12,17 @@ final class EmailQueueFaultStatement extends PDOStatement
     {
     }
 
+    /** @return array<string, mixed>|false */
+    public function getColumnMeta(int $column): array|false
+    {
+        if ($this->connection->mode === 'worker_metadata_false'
+            && str_starts_with($this->queryString, 'SELECT * FROM `cd_email_queue` LIMIT 0')) {
+            ++$this->connection->workerMetadataFaults;
+            return false;
+        }
+        return parent::getColumnMeta($column);
+    }
+
     /** @param array<array-key, mixed>|null $params */
     public function execute(?array $params = null): bool
     {

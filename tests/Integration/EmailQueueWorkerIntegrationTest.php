@@ -349,6 +349,12 @@ class EmailQueueWorkerIntegrationTest extends TestCase
         $realPdoMock->expects($this->once())
             ->method('beginTransaction');
 
+        $metadata = $this->createMock(\PDOStatement::class);
+        $metadata->method('columnCount')->willReturn(1);
+        $metadata->expects($this->once())->method('getColumnMeta')->with(0)->willReturn(['name' => 'id']);
+        $realPdoMock->expects($this->once())->method('query')
+            ->with('SELECT * FROM `cd_email_queue` LIMIT 0')->willReturn($metadata);
+
         $stmtMock = $this->createMock(\PDOStatement::class);
         $stmtMock->method('fetchAll')->willReturn([]);
 
@@ -371,7 +377,6 @@ class EmailQueueWorkerIntegrationTest extends TestCase
 
         $worker->processBatch(10);
     }
-
 
     public function testWorkerSendsEmailWithReplyTo(): void
     {

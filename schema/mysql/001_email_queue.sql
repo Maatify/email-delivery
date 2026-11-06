@@ -1,5 +1,5 @@
 -- Fresh install: apply 001 then 002. Existing deployments apply 002 and 003 instead.
--- Raw AES-GCM bytes require binary columns. All package timestamps use a UTC session.
+-- Raw AES-GCM bytes require binary columns. Keyed timestamps use UTC; legacy timing retains its prior contract.
 CREATE TABLE IF NOT EXISTS cd_email_queue (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     entity_type VARCHAR(255) NULL,

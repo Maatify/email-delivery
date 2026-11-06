@@ -238,13 +238,23 @@ later does not reschedule or conflict, but `null` and an explicit time are disti
 - Both tables must be InnoDB with the complete binary identity/unique constraints. The library checks
   compatibility before writes; it does not silently ALTER incompatible installations.
 - `enqueue_receipt_id` is package-owned and immutable. Legacy inserts leave it NULL and the existing
-  worker ignores it. It prevents a reused numeric job ID from impersonating an old receipt's job.
+  worker uses its presence to select UTC timing for keyed jobs. NULL-token legacy rows keep local
+  clock semantics. The token also prevents a reused numeric job ID from impersonating an old receipt's job.
 - Receipts are retained indefinitely in this initial contract. Do not delete them or reuse their keys.
   Queue purge leaves receipt lookup available with `QueueMissing`; it never recreates a job or infers
   `Sent`. There is no automatic receipt pruner/backfill.
 - The logical fingerprint is an **encrypted digest**, not a plaintext short-secret guessing oracle.
   Keep its supplied versioned crypto context stable and retain old fingerprint decryption keys while
   receipts exist. Missing old keys fail closed on replay; receipt lookup needs no decryption.
+
+### Worker clock compatibility
+
+Keyed jobs use database UTC for due/retry comparisons, retry deadlines and `sent_at`, regardless of
+worker PDO session or PHP timezone. Their backoff delays and attempt cap are unchanged. NULL-token
+legacy rows keep the original database `NOW()` comparisons/`sent_at` and PHP-local retry calculation.
+The worker discovers the optional binding column inside each batch transaction without changing the
+session timezone or caching schema capability; pre-003 MySQL tables and existing SQLite legacy
+fixtures retain their old path. Metadata read errors fail closed rather than masquerading as an old schema.
 
 ### Errors and transaction ownership
 

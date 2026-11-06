@@ -49,4 +49,12 @@ pruning or automatic retry under a different key is safe under the initial indef
 
 Commit failure can be ambiguous. Discard an unresolved connection and use the same namespace/key
 on a fresh one. Do not infer a lost request from a timeout or from an unavailable queue row. This does
-not change worker retries, SMTP behavior, or application-specific notification policy.
+not change worker backoff durations/attempt caps, SMTP behavior, or application-specific notification policy.
+
+### UTC timing for keyed jobs
+
+Keyed jobs use database UTC for due/retry selection, retry deadlines and `sent_at`, including workers
+whose PDO session and PHP use other zones. NULL-token legacy jobs retain local `NOW()` comparisons
+and PHP-local retry calculation. The worker discovers the optional column per transaction; old
+pre-003 schemas keep their original path. It never changes session timezone, backoff durations or
+SMTP policy, and does not interpret metadata read failures as an absent column.

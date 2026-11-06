@@ -38,7 +38,7 @@ Failed commit is unresolved even when the connection subsequently appears idle: 
 
 Receipts are retained indefinitely in this initial contract; keys cannot be reused and no receipt pruner is provided. Queue deletion never cascades to a receipt. This costs durable metadata and retained fingerprint read keys. A future finite retention policy requires an explicit guarantee-window contract.
 
-Numeric job IDs alone are not sufficient: deletion/TRUNCATE can allow reuse. New jobs therefore carry package-owned immutable `enqueue_receipt_id = receiptId`, unique when non-NULL. The reader joins both job ID and binding. Legacy inserts leave it NULL; the unchanged worker ignores it. A reused ID for a legacy or another keyed job cannot make an old receipt appear sent. Replay after queue purge returns the original receipt with `QueueMissing`, and never recreates the job. Consumers must not update the binding or manually delete receipts.
+Numeric job IDs alone are not sufficient: deletion/TRUNCATE can allow reuse. New jobs therefore carry package-owned immutable `enqueue_receipt_id = receiptId`, unique when non-NULL. The reader joins both job ID and binding. Legacy inserts leave it NULL. The worker distinguishes keyed UTC timing from legacy local timing by this token; SMTP/backoff policy is unchanged. A reused ID for a legacy or another keyed job cannot make an old receipt appear sent. Replay after queue purge returns the original receipt with `QueueMissing`, and never recreates the job. Consumers must not update the binding or manually delete receipts.
 
 ## Package-owned schema adoption
 
@@ -46,6 +46,15 @@ Numeric job IDs alone are not sufficient: deletion/TRUNCATE can allow reuse. New
 - Existing legacy queue: apply `002_email_enqueue_receipts.sql` and the **one-time** `003_email_queue_receipt_binding.sql` before adopting the keyed API. Do not apply 003 after fresh 001.
 - 003 uses portable `ALTER TABLE ADD COLUMN/ADD UNIQUE KEY`, not MySQL-incompatible `ADD COLUMN IF NOT EXISTS`. Deployments own migration bookkeeping; no generic migration runner is introduced.
 - No legacy backfill or deduplication occurs. `CREATE TABLE IF NOT EXISTS` is not a compatibility proof: runtime schema validation fails closed on incompatible engines/identity constraints instead of altering data.
+
+## Worker timing compatibility — F5-01
+
+The keyed writer stores UTC datetimes. Workers therefore compare keyed due/retry times and write
+keyed `sent_at`/retry deadlines using the database UTC clock, independent of the worker session/PHP
+zone. NULL-token rows preserve the original local `NOW()`/PHP `date()` behavior. The worker discovers
+the optional column from result metadata inside each batch transaction, retaining old MySQL pre-003
+and SQLite legacy compatibility without changing session timezone or caching the schema. Metadata
+failure is not treated as column absence. Retry delay tables, attempt caps and SMTP policy do not change.
 
 ## Verification and remaining delivery limits
 
