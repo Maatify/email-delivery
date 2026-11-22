@@ -1097,6 +1097,48 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         }
     }
 
+    public function testTwoClaimsNeverReclaimTheSameExpiredRow(): void
+    {
+        // Real clocks here: an hour old is far past the default lease.
+        $job = $this->stale($this->enqueue('key-1'), 1, gmdate('Y-m-d H:i:s', time() - 3600));
+        $other = $this->rawConnection([]);
+        $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
+        $otherError = null;
+        $connection = new EmailQueueFaultPdo();
+        $connection->afterExecuteHook = function (string $sql) use ($other, &$otherError): void {
+            if (str_contains($sql, 'WHERE id IN (') && $otherError === null) {
+                // Right after this claim locked the expired row, another worker runs its own claim.
+                $otherError = $this->errorOf(fn () => $this->worker($other)->processBatch()) ?? 'none';
+            }
+        };
+
+        $this->worker($connection)->processBatch();
+
+        self::assertStringContainsString('1205', (string) $otherError, 'The other claim waited for the locked row instead of taking it.');
+        self::assertSame(1, $this->transport->calls, 'Sent once, by one claim.');
+        self::assertSame(['sent', '2'], [$this->row($job)['status'], $this->row($job)['attempts']]);
+    }
+
+    public function testACandidateRenewedBeforeItIsLockedIsNotReclaimed(): void
+    {
+        $job = $this->stale($this->enqueue('key-1'), 1, gmdate('Y-m-d H:i:s', time() - 3600));
+        $connection = new EmailQueueFaultPdo();
+        $renewed = false;
+        $connection->afterExecuteHook = function (string $sql) use ($job, &$renewed): void {
+            if (str_starts_with(ltrim($sql), 'SELECT id FROM') && !$renewed) {
+                // Between the unlocked candidate read and the lock, the owner renews its lease.
+                $renewed = true;
+                $this->pdo->exec("UPDATE cd_email_queue SET updated_at = UTC_TIMESTAMP() WHERE id = $job");
+            }
+        };
+
+        $this->worker($connection)->processBatch();
+
+        self::assertTrue($renewed);
+        self::assertSame(0, $this->transport->calls, 'The lease is re-checked on the latest version before the row is taken.');
+        self::assertSame(['processing', '1'], [$this->row($job)['status'], $this->row($job)['attempts']]);
+    }
+
     // ── lead review L2: a failure reason is cut on a character boundary ──
 
     public function testAFailureReasonCutInsideAMultibyteCharacterIsStillRecorded(): void
