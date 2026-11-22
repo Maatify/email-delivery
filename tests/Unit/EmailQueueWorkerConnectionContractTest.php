@@ -227,6 +227,23 @@ final class EmailQueueWorkerConnectionContractTest extends TestCase
         self::assertSame([[E_USER_WARNING, 'fixture: Packets out of order']], $outer);
     }
 
+    public function testAScopedBatchRejectsAnEmptyEntityTypeBeforeConnecting(): void
+    {
+        $connected = false;
+        $worker = $this->worker(static function () use (&$connected): PDO {
+            $connected = true;
+            return new PDO('sqlite::memory:');
+        });
+
+        try {
+            $worker->processBatchByEntityType('');
+            self::fail('An empty entity type was accepted.');
+        } catch (InvalidArgumentException $refused) {
+            self::assertStringContainsString('entity type', $refused->getMessage());
+        }
+        self::assertFalse($connected, 'Rejected before the connection is opened.');
+    }
+
     /** @return iterable<string, array{int}> */
     public static function nonExceptionErrorModes(): iterable
     {

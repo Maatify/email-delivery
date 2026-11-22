@@ -17,6 +17,7 @@ use Throwable;
 use Tests\Support\EmailQueueFaultPdo;
 use Tests\Support\EmailQueueTestFactory as Factory;
 use Tests\Support\IsolatedEmailMysqlTestCase;
+use Tests\Support\WorkerBatch;
 use Tests\Support\WorkerRecordingLogger;
 use Tests\Support\WorkerRecordingTransport;
 
@@ -24,7 +25,7 @@ use Tests\Support\WorkerRecordingTransport;
  * The worker's connection idles while it renders and sends. These tests close it the way a real server
  * does (a short session wait_timeout, or a server-side KILL) and check what the worker records afterwards.
  */
-final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
+class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
 {
     private const IDLE_TIMEOUT_SECONDS = 2;
     private const NOW = '2030-01-01T12:00:00Z';
@@ -55,8 +56,16 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
     {
         // A failed scenario can keep a worker connection alive (for example through an exception trace) with
         // uncommitted work. Close it on the server so its locks never block the fixture's DROP TABLE.
+        $this->connections = [];
+        // Worker connections whose hooks capture them sit in reference cycles; free them now, not whenever PHP's
+        // cycle collector next runs, or a long run exhausts the server's connections (1040).
+        gc_collect_cycles();
         if (isset($this->pdo)) {
-            foreach ($this->openedThreads as $thread) {
+            // Every connection still on this test's isolated database, except the fixture's own, belongs to
+            // this test: the ones it opened and any a hook kept alive.
+            $leftover = $this->pdo->query('SELECT ID FROM information_schema.PROCESSLIST WHERE DB = DATABASE() AND ID <> CONNECTION_ID()');
+            $threads = [...$this->openedThreads, ...array_map('intval', $leftover === false ? [] : $leftover->fetchAll(PDO::FETCH_COLUMN))];
+            foreach (array_unique($threads) as $thread) {
                 try {
                     $this->pdo->exec('KILL CONNECTION ' . $thread);
                 } catch (PDOException) {
@@ -64,7 +73,6 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
                 }
             }
         }
-        $this->connections = [];
         parent::tearDown();
     }
 
@@ -862,6 +870,9 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
             // Both unlocked candidate reads, expired leases and due pending rows, walk the claim index in order.
             $plan = $this->pdo->prepare('EXPLAIN ' . str_replace('FOR UPDATE', '', $sql));
             $plan->bindValue(':limit', 10, PDO::PARAM_INT);
+            if (str_contains($sql, ':entity_type')) {
+                $plan->bindValue(':entity_type', (string) $this->batchEntityType());
+            }
             if (str_contains($sql, ':lease')) {
                 $plan->bindValue(':lease', EmailQueueWorker::DEFAULT_PROCESSING_LEASE_SECONDS, PDO::PARAM_INT);
             }
@@ -1357,7 +1368,7 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
             ++$observed['locking_reads'];
             $other = self::connection();
             $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
-            $explained = preg_replace('/\bFOR UPDATE\b/', '', str_replace(':lease', '300', (string) preg_replace('/\(:id\d+(?:, :id\d+)*\)/', '(' . implode(', ', $candidates) . ')', $sql)));
+            $explained = preg_replace('/\bFOR UPDATE\b/', '', str_replace([':lease', ':entity_type'], ['300', "'" . $this->batchEntityType() . "'"], (string) preg_replace('/\(:id\d+(?:, :id\d+)*\)/', '(' . implode(', ', $candidates) . ')', $sql)));
             foreach (($other->query('EXPLAIN ' . $explained) ?: throw new \LogicException('EXPLAIN failed'))->fetchAll(PDO::FETCH_ASSOC) as $step) {
                 $observed['plan'][] = [(string) ($step['key'] ?? ''), (string) ($step['type'] ?? '')];
             }
@@ -1837,12 +1848,23 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
     }
 
     /** @param PDO|Closure(): PDO $connection */
-    private function worker(PDO|Closure $connection, ?int $leaseSeconds = null): EmailQueueWorker
+    /**
+     * The entity type every batch in this class is scoped to: null runs processBatch(). A subclass runs every
+     * scenario again through processBatchByEntityType() with the fixture rows' type.
+     */
+    protected function batchEntityType(): ?string
+    {
+        return null;
+    }
+
+    /** @param PDO|Closure(): PDO $connection */
+    private function worker(PDO|Closure $connection, ?int $leaseSeconds = null): WorkerBatch
     {
         $renderer = new TwigEmailRenderer(dirname(__DIR__) . '/Fixtures/templates', ['global_app_name' => 'Fixture'], false);
-        return $leaseSeconds === null
+        $worker = $leaseSeconds === null
             ? new EmailQueueWorker($connection, Factory::crypto(), $renderer, $this->transport, new Factory(), $this->logger)
             : new EmailQueueWorker($connection, Factory::crypto(), $renderer, $this->transport, new Factory(), $this->logger, $leaseSeconds);
+        return new WorkerBatch($worker, $this->batchEntityType());
     }
 
     private function enqueue(string $key): int

@@ -105,6 +105,29 @@ final class EmailQueueWorker
 
     public function processBatch(int $limit = 50): void
     {
+        $this->claimAndProcess($limit, null);
+    }
+
+    /**
+     * Processes one batch of the rows whose `entity_type` is exactly $entityType, for a worker dedicated to one
+     * kind of mail in a shared queue. Everything else is as processBatch(): the same claim, lease, fence, retry
+     * rules and checks. The filter applies to both candidate reads (due `pending` rows and expired leases) and to
+     * the primary-key locking read that re-checks them, so the batch never selects, locks, reclaims or settles a
+     * row of another type. A row whose `entity_type` is NULL never matches; only processBatch() handles it.
+     *
+     * @throws InvalidArgumentException when $entityType is empty
+     */
+    public function processBatchByEntityType(string $entityType, int $limit = 50): void
+    {
+        if ($entityType === '') {
+            throw new InvalidArgumentException('The entity type of a scoped email batch must not be empty.');
+        }
+        $this->claimAndProcess($limit, $entityType);
+    }
+
+    /** @param string|null $entityType null for every row (processBatch), otherwise rows of exactly this type */
+    private function claimAndProcess(int $limit, ?string $entityType): void
+    {
         // Nothing has run yet, so replacing a closed connection here cannot split any work.
         $pdo = $this->connectionForClaim();
         $pdo->beginTransaction();
@@ -136,18 +159,26 @@ final class EmailQueueWorker
                     attempts$bindingColumn";
 
             $duePredicate = "status = 'pending' AND scheduled_at <= $dueClock AND (retry_after IS NULL OR retry_after <= $dueClock)";
+            // A scoped batch narrows every read below, including the locking re-check, to one entity type.
+            $typeScope = $entityType === null ? '' : ' AND entity_type = :entity_type';
 
             // Candidates first, without locks: the ids of expired-lease rows and of due `pending` rows, each in
             // (priority, id) order with the batch limit. With an index led by (status, priority, id) each read
             // walks its status in order. A locking scan would lock every entry it walks past: in-flight rows (and
             // deadlock with their outcome writes, which lock the primary key first), and `pending` rows that are
             // not yet due, with the gaps between them, so enqueues and reschedules would wait for the claim.
-            $staleCandidates = $pdo->prepare("SELECT id FROM `$table` WHERE $stalePredicate ORDER BY priority ASC, id ASC LIMIT :limit");
+            $staleCandidates = $pdo->prepare("SELECT id FROM `$table` WHERE $stalePredicate$typeScope ORDER BY priority ASC, id ASC LIMIT :limit");
             $staleCandidates->bindValue(':lease', $this->processingLeaseSeconds, PDO::PARAM_INT);
             $staleCandidates->bindValue(':limit', $limit, PDO::PARAM_INT);
+            if ($entityType !== null) {
+                $staleCandidates->bindValue(':entity_type', $entityType);
+            }
             $staleCandidates->execute();
-            $dueCandidates = $pdo->prepare("SELECT id FROM `$table` WHERE $duePredicate ORDER BY priority ASC, id ASC LIMIT :limit");
+            $dueCandidates = $pdo->prepare("SELECT id FROM `$table` WHERE $duePredicate$typeScope ORDER BY priority ASC, id ASC LIMIT :limit");
             $dueCandidates->bindValue(':limit', $limit, PDO::PARAM_INT);
+            if ($entityType !== null) {
+                $dueCandidates->bindValue(':entity_type', $entityType);
+            }
             $dueCandidates->execute();
             $candidateIds = array_values(array_unique(array_map('intval', [
                 ...$staleCandidates->fetchAll(PDO::FETCH_COLUMN),
@@ -168,7 +199,7 @@ final class EmailQueueWorker
                     SELECT $columnList
                     FROM `$table` FORCE INDEX (PRIMARY)
                     WHERE id IN (" . implode(', ', array_keys($named)) . ")
-                      AND (($duePredicate) OR ($stalePredicate))
+                      AND (($duePredicate) OR ($stalePredicate))$typeScope
                     ORDER BY id ASC
                     FOR UPDATE
                 ");
@@ -176,6 +207,9 @@ final class EmailQueueWorker
                     $lock->bindValue($placeholder, $candidateId, PDO::PARAM_INT);
                 }
                 $lock->bindValue(':lease', $this->processingLeaseSeconds, PDO::PARAM_INT);
+                if ($entityType !== null) {
+                    $lock->bindValue(':entity_type', $entityType);
+                }
                 $lock->execute();
                 /** @var list<EmailQueueRow> $rows */
                 $rows = $lock->fetchAll(PDO::FETCH_ASSOC);
