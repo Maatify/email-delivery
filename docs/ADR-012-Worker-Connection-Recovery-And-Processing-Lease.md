@@ -1,8 +1,10 @@
 # ADR-012: Worker connection recovery and processing lease
 
-**Status:** AWAITING OWNER ACCEPTANCE of this record. Unreleased. Items 5 and 7 are the owner's
-decisions, recorded on [issue #13](https://github.com/Maatify/email-delivery/issues/13#issuecomment-7072371032):
-at-least-once delivery, and a default lease of 300 seconds.
+**Status:** ACCEPTED / UNRELEASED. The owner accepted this entire ADR on 2026-11-22;
+see the [formal owner-acceptance record on PR #14](https://github.com/Maatify/email-delivery/pull/14#issuecomment-7079019339).
+Items 5 and 7 were separately decided earlier on [issue #13](https://github.com/Maatify/email-delivery/issues/13#issuecomment-7072371032):
+at-least-once delivery, and a default lease of 300 seconds. Approval of this architecture does not
+authorize merging PR #14, publishing a release, or creating a tag.
 
 **Date:** 2026-11-22
 
