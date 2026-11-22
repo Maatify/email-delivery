@@ -82,12 +82,23 @@ final class EmailQueueWorkerConnectionContractTest extends TestCase
         $worker->processBatch();
     }
 
-    public function testADriverDisconnectWarningIsDroppedWhenTheLostConnectionIsReported(): void
+    /** @return iterable<string, array{string}> mysqlnd warnings that accompany a closed connection */
+    public static function disconnectSymptoms(): iterable
     {
-        $outer = $this->outerWarnings(function (): void {
+        yield 'out-of-order packet' => ['Packets out of order. Expected 1 received 0'];
+        yield 'gone away' => ['MySQL server has gone away'];
+        yield 'send failure' => ['Error while sending QUERY packet'];
+        yield 'read failure' => ['Error while reading greeting packet'];
+        yield 'result header' => ["Error reading result set's header"];
+    }
+
+    #[DataProvider('disconnectSymptoms')]
+    public function testADriverDisconnectWarningIsDroppedWhenTheLostConnectionIsReported(string $symptom): void
+    {
+        $outer = $this->outerWarnings(function () use ($symptom): void {
             try {
-                self::onPossiblyClosedConnection(static function (): never {
-                    self::raiseWarning('Packets out of order');
+                self::onPossiblyClosedConnection(static function () use ($symptom): never {
+                    self::raiseWarning($symptom);
                     $lost = new PDOException('Fixture lost connection');
                     $lost->errorInfo = ['HY000', 4031, 'Fixture'];
                     throw $lost;

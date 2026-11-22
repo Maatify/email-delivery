@@ -471,16 +471,103 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame('sent', $this->row($job)['status']);
     }
 
+    public function testAnApplicationThatTurnsWarningsIntoExceptionsStillRecoversFromAServerSideClose(): void
+    {
+        $job = $this->enqueue('key-1');
+        $worker = $this->worker($this->factory());
+        $this->transport->duringSend = fn (int $call) => $this->closeWorkerConnection();
+        set_error_handler(static function (int $level, string $message, string $file, int $line): never {
+            throw new \ErrorException($message, 0, $level, $file, $line);
+        });
+        try {
+            $error = $this->errorOf(static fn () => $worker->processBatch());
+        } finally {
+            restore_error_handler();
+        }
+
+        self::assertNull($error);
+        self::assertSame(['sent', '1'], [$this->row($job)['status'], $this->row($job)['attempts']]);
+        self::assertSame(1, $this->transport->calls);
+        self::assertCount(2, $this->connections);
+    }
+
+    /** @return iterable<string, array{int, string}> */
+    public static function failureWrites(): iterable
+    {
+        yield 'retry write' => [0, "status      = 'pending'"];
+        yield 'final failure write' => [3, "SET status = 'failed', last_error = :error"];
+    }
+
+    #[DataProvider('failureWrites')]
+    public function testAFailureWriteThatFailsOnALiveConnectionLeavesTheRowToTheLeaseAndTheBatchContinues(int $priorAttempts, string $write): void
+    {
+        $first = $this->enqueue('key-1');
+        $second = $this->enqueue('key-2');
+        $this->pdo->exec("UPDATE cd_email_queue SET attempts = $priorAttempts WHERE id = $first");
+        $faults = 0;
+        $connection = $this->statementFaults($write, 1205, $faults);
+        $this->transport->duringSend = function (int $call): void {
+            $this->transport->fail = $call === 1;
+        };
+
+        $error = $this->errorOf(fn () => $this->worker($connection)->processBatch());
+
+        self::assertSame([
+            'batch_error' => null,
+            'status' => 'processing',
+            'attempts' => (string) ($priorAttempts + 1),
+            'last_error' => '',
+            'next_row' => 'sent',
+            'sends' => 2,
+        ], [
+            'batch_error' => $error,
+            'status' => $this->row($first)['status'],
+            'attempts' => $this->row($first)['attempts'],
+            'last_error' => $this->row($first)['last_error'],
+            'next_row' => $this->row($second)['status'],
+            'sends' => $this->transport->calls,
+        ], 'A lock wait on one failure write does not stop the batch.');
+        self::assertSame(1, $faults);
+        $unrecorded = $this->logger->contexts('error', 'Email job failure was not recorded');
+        self::assertCount(1, $unrecorded);
+        self::assertSame([(int) $first, $priorAttempts + 1, false], [$unrecorded[0]['job_id'], $unrecorded[0]['attempt'], $unrecorded[0]['connection_lost']]);
+    }
+
+    public function testAFailureWriteStillUnrecordedAfterOneReconnectStopsTheBatch(): void
+    {
+        $first = $this->enqueue('key-1');
+        $second = $this->enqueue('key-2');
+        $worker = $this->worker($this->factory());
+        $this->closedFrom = 1;
+        $this->transport->fail = true;
+        $this->transport->duringSend = fn (int $call) => $this->closeWorkerConnection();
+
+        $error = $this->errorOf(static fn () => $worker->processBatch());
+
+        self::assertNotNull($error);
+        self::assertStringContainsString('2006', $error);
+        self::assertSame(1, $this->transport->calls, 'No further mail may be sent while outcomes cannot be recorded.');
+        self::assertCount(2, $this->connections);
+        self::assertSame(['processing', 'processing'], [$this->row($first)['status'], $this->row($second)['status']]);
+        self::assertSame(true, $this->logger->contexts('error', 'Email job failure was not recorded')[0]['connection_lost'] ?? null);
+    }
+
     // ── fixture helpers ───────────────────────────────────────────
 
     /** A real connection whose first `sent` write fails with the given driver code. */
     private function sentWriteFaults(?int $driverCode, int &$faults): EmailQueueFaultPdo
     {
+        return $this->statementFaults("SET status = 'sent'", $driverCode, $faults, 'Fixture sent-status write failure');
+    }
+
+    /** A real connection whose first statement containing $needle fails with the given driver code. */
+    private function statementFaults(string $needle, ?int $driverCode, int &$faults, string $message = 'Fixture status write failure'): EmailQueueFaultPdo
+    {
         $pdo = new EmailQueueFaultPdo();
-        $pdo->beforeExecuteHook = static function (string $sql) use ($driverCode, &$faults): void {
-            if (str_contains($sql, "SET status = 'sent'") && $faults === 0) {
+        $pdo->beforeExecuteHook = static function (string $sql) use ($needle, $driverCode, $message, &$faults): void {
+            if (str_contains($sql, $needle) && $faults === 0) {
                 ++$faults;
-                $failure = new PDOException('Fixture sent-status write failure');
+                $failure = new PDOException($message);
                 $failure->errorInfo = $driverCode === null ? null : ['HY000', $driverCode, 'Fixture'];
                 throw $failure;
             }

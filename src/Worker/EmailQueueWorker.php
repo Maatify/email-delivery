@@ -339,9 +339,8 @@ final class EmailQueueWorker
      * the attempt cap, or settled failed/processing_lease_expired at the cap (at-least-once). The error log
      * line is the record of the send.
      *
-     * A connection still lost after one reconnect is rethrown: the batch stops, no further mail goes out
-     * while outcomes cannot be recorded, and the caller handles the dead link. Any other error continues
-     * with the next row.
+     * A connection still lost after one reconnect is rethrown, and any other error continues with the
+     * next row; see outcomeWriteLostTheConnection().
      */
     private function recordSent(int $id, int $attempt, string $clock): void
     {
@@ -355,9 +354,7 @@ final class EmailQueueWorker
                 )->execute(['id' => $id]);
             });
         } catch (Throwable $failure) {
-            // A null connection means the reconnect itself failed.
-            $connectionLost = $this->connection === null
-                || ($failure instanceof PDOException && self::isConnectionLost($failure));
+            $connectionLost = $this->outcomeWriteLostTheConnection($failure);
             $this->logger->error('Email sent but status write failed', [
                 'job_id'          => $id,
                 'attempt'         => $attempt,
@@ -449,11 +446,18 @@ final class EmailQueueWorker
                 }
             }
         } catch (Throwable $failure) {
+            // The same rule as for the sent write: only a lost connection stops the batch.
+            $connectionLost = $this->outcomeWriteLostTheConnection($failure);
             $this->logger->error('Email job failure was not recorded', [
-                'job_id' => $id,
-                'reason' => $failure->getMessage(),
+                'job_id'          => $id,
+                'attempt'         => $attempts,
+                'connection_lost' => $connectionLost,
+                'reason'          => $failure->getMessage(),
             ]);
-            throw $failure;
+            if ($connectionLost) {
+                throw $failure;
+            }
+            return;
         }
 
         if (!$recorded) {
@@ -580,6 +584,18 @@ final class EmailQueueWorker
             throw new UnexpectedValueException('The email queue connection factory must return a PDO in exception error mode.');
         }
         return $this->connection = $connection;
+    }
+
+    /**
+     * The one rule for an outcome write that failed even after its reconnect. A lost connection, or a
+     * reconnect that itself failed (no connection is left), stops the batch: no further mail goes out
+     * while outcomes cannot be recorded, and the caller handles the dead link. Any other error leaves
+     * the row `processing` for its lease and lets the batch go on.
+     */
+    private function outcomeWriteLostTheConnection(Throwable $failure): bool
+    {
+        return $this->connection === null
+            || ($failure instanceof PDOException && self::isConnectionLost($failure));
     }
 
     private static function isConnectionLost(PDOException $failure): bool

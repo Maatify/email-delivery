@@ -101,8 +101,9 @@ minimum 1) is how long a `processing` row may go without renewal: the claim stam
 row's clock and each row renews it before its send. An expired row under the attempt cap is claimed and
 sent again; at the cap it is settled `failed` with `processing_lease_expired`. Retry/failed writes are
 fenced by attempt; the `sent` write is not. A failed `sent` write never writes pending/failed: it is
-logged (`Email sent but status write failed`) and the row is left to its lease. A connection still lost
-after one reconnect is rethrown and stops the batch; other errors continue with the next row.
+logged (`Email sent but status write failed`) and the row is left to its lease. For every outcome write,
+a connection still lost after one reconnect is rethrown and stops the batch; other errors, such as a lock
+wait, leave the row to its lease and the batch continues with the next row.
 Delivery is at-least-once. See
 [ADR-012](../ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).
 

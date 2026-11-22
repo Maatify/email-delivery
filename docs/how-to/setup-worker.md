@@ -36,8 +36,10 @@ once; a database that stays unreachable still makes `processBatch()` throw.
 
 When a `sent` status cannot be recorded, the worker logs `Email sent but status write failed`. Alert on
 that message: the row stays `processing` until its lease expires and is then claimed again, so that
-message may be sent twice. If the connection is still lost after one reconnect, the worker rethrows and
-stops the batch; the batch's remaining claimed rows go out after their lease (300 seconds by default).
+message may be sent twice. A retry/failed write that cannot be recorded is logged as `Email job failure
+was not recorded`. For both, a connection still lost after one reconnect is rethrown and stops the batch,
+and the batch's remaining claimed rows go out after their lease (300 seconds by default). Any other error
+leaves that row to its lease and the batch goes on.
 Rows interrupted before their send are recovered the same way; no separate recovery script is needed.
 See [processing lease](../book/worker.md#processing-lease) and
 [ADR-012](../ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).

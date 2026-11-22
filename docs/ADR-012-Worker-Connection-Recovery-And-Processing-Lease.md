@@ -41,9 +41,14 @@ which scheduled a second send of a message that had already been sent.
    writes `pending`/`failed` and never counts as a send failure. The worker logs
    `Email sent but status write failed` with the job and attempt; that line is the record of the send.
    The row stays `processing` and the lease decides what happens next: sent again under the cap, or settled
-   `failed`/`processing_lease_expired` at it. A connection still lost after one reconnect is rethrown,
-   so the batch stops, no further mail goes out on a dead link, and the caller handles it. The batch's
-   remaining claimed rows then wait one lease. Any other error continues with the next row.
+   `failed`/`processing_lease_expired` at it.
+   **One rule for every outcome write** (`sent`, retry and failed) that still fails after its reconnect:
+   - A lost connection, or a reconnect that itself failed, is rethrown. The batch stops, no further mail
+     goes out on a dead link, and the caller handles it. The batch's remaining claimed rows then wait one
+     lease.
+   - Any other error, such as a lock wait or a deadlock, is logged and the batch continues with the next
+     row. The row stays `processing` for its lease. A failed retry/failed write is logged as
+     `Email job failure was not recorded`.
 5. **Processing lease in the claim (owner decision: at-least-once).** The claim selects due `pending`
    rows and `processing` rows whose `updated_at` is older than the lease, compared with the row's own
    clock: `UTC_TIMESTAMP()` for keyed rows, `NOW()` for legacy rows. The claim stamps `updated_at`, and

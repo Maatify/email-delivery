@@ -86,7 +86,9 @@ expires, then is sent again under the attempt cap or settled `failed` (`processi
   for their lease (300 seconds by default) before a later batch sends them.
 - Any other error, such as a lock wait, continues with the next row.
 
-A retry/failed write that still fails is logged as `Email job failure was not recorded` and rethrown.
+A retry/failed write that still fails follows the same rule. It is logged as `Email job failure was not
+recorded` with the same fields. A lost connection is rethrown; any other error leaves the row to its
+lease and the batch continues.
 The worker changes no session setting on any connection; session settings, including `wait_timeout`,
 belong to your factory.
 
