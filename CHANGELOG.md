@@ -9,14 +9,15 @@ Published dates below use the corresponding GitHub Release publication date in U
 
 ### Added
 - `EmailQueueWorker::processBatchByEntityType(string $entityType, int $limit = 50)` (#12): one batch of the
-  rows whose `entity_type` equals the given type, for a worker dedicated to one kind of mail in a shared
+  rows whose `entity_type` equals the given type byte for byte (case, accents and trailing spaces count,
+  whatever the column's collation), for a worker dedicated to one kind of mail in a shared
   queue. The filter applies to both candidate reads and to the primary-key locking read that re-checks
   them, so the batch never selects, locks, reclaims or settles a row of another type. A NULL `entity_type`
   is taken only by `processBatch()`, an empty type is rejected, and `processBatch()` is unchanged. See the
   [worker book](docs/book/worker.md#scoped-batches-one-entity-type).
 - Optional schema `006_email_queue_entity_type_claim_index.sql` (#12), for scoped batches behind a large
-  backlog of other entity types: one scoped read took 63 ms (MySQL) and 220 ms (MariaDB) behind 100,000
-  rows of another type without it, about 1 ms with it. Not needed otherwise.
+  backlog of other entity types: one scoped read took 60 ms (MySQL) and 213 ms (MariaDB) behind 100,000
+  rows of another type without it, under 1 ms with it. Not needed otherwise.
 - `EmailQueueWorker` accepts a connection factory, `Closure(): PDO`, as its first argument (#13). It
   opens its connection on first use and replaces one the server closed: before the claim transaction,
   and once around each single status statement after driver error 2006, 2013 or 4031. A `PDO` instance
@@ -73,8 +74,10 @@ Published dates below use the corresponding GitHub Release publication date in U
 
 ### Compatibility and limits
 - `phpmailer/phpmailer` is now `^6.9 || ^7.0` (#12). Applications on PHPMailer 7 can install the package;
-  6.9+ keeps working. PHPMailer 7's only break concerns subclasses calling `lang()`/`setLanguage()`, which
-  the package does not use. CI runs the suite, including a real SMTP send, on 6.9.0 and the latest 7.x.
+  6.9+ keeps working. None of PHPMailer's 7.x breaking changes (static language methods, the protected
+  `ReplyTo` format, strict `Encoding` values, XCLIENT encoding) touches the API the transport uses; see the
+  [transport book](docs/book/transport.md#phpmailer-69-and-7). CI runs the suite, including a real SMTP
+  send, on 6.9.0 and the latest 7.x.
 - Semantic versioning: additive and backward compatible within 1.x (a minor release). The first
   parameter keeps its name and position and widens to `PDO|Closure`; a trailing optional parameter
   and a public constant are added. The class stays `final` and is no longer declared `readonly`.

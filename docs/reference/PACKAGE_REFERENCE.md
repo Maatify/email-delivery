@@ -89,9 +89,10 @@ It reads only the real queue. Receipt-bound rows use database UTC; NULL-token le
 tables retain their local clock behavior. No worker session timezone is silently changed.
 SMTP retry delays are 30/60/120 seconds; other failures use 60/300/900; attempt 4 permanently fails.
 **Unreleased.** `processBatchByEntityType(entityType, limit=50)` processes one batch of the rows whose
-`entity_type` equals the given type. The filter applies to both candidate reads and to the primary-key
-locking read that re-checks them; the batch reclaims and settles at the cap only rows of its own type. A
-NULL `entity_type` is taken only by `processBatch()`. An empty type throws `InvalidArgumentException`.
+`entity_type` equals the given type byte for byte (case, accents and trailing spaces count). The filter
+applies to both candidate reads and to the primary-key locking read that re-checks them; the batch reclaims
+and settles at the cap only rows of its own type. A NULL `entity_type` is taken only by `processBatch()`. An
+empty type throws `InvalidArgumentException`.
 Optional schema 006 indexes scoped batches; see [scoped batches](../book/worker.md#scoped-batches-one-entity-type).
 The host owns supervision and investigation of ambiguous delivery. Claim or persistence errors can
 escape; do not infer that every worker failure is swallowed. See [worker](../book/worker.md)

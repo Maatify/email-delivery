@@ -174,13 +174,17 @@ measurement. The worker never changes the isolation level.
 ## Scoped batches: one entity type
 
 `processBatchByEntityType($entityType, $limit)` runs the same batch as `processBatch($limit)`, but only for
-rows whose `entity_type` equals `$entityType` exactly. Use it for a worker dedicated to one kind of mail,
-such as administrator mail, in a queue that also holds other kinds. `processBatch()` is unchanged and still
-takes every row.
+rows whose `entity_type` equals `$entityType` exactly, byte for byte. Use it for a worker dedicated to one
+kind of mail, such as administrator mail, in a queue that also holds other kinds. `processBatch()` is
+unchanged and still takes every row.
 
 - **Where the filter applies:** both unlocked candidate reads (due `pending` rows and expired leases) and
-  the primary-key locking read that re-checks them carry `entity_type = :entity_type`. The batch never
-  selects or locks a row of another type, and a candidate whose type changed before the lock is not taken.
+  the primary-key locking read that re-checks them. The batch never selects or locks a row of another type,
+  and a candidate whose type changed before the lock is not taken.
+- **Exactly means byte for byte:** case, accents and trailing spaces count, whatever the column's collation.
+  The package schema compares `entity_type` with `utf8mb4_unicode_ci`, which ignores all three, so each
+  statement follows the collation equality (which an index on `entity_type` can serve) with a comparison of
+  the UTF-8 bytes. A batch for `admin` never takes `Admin`, `ADMIN`, `admín` or `admin `.
 - **Leases:** a scoped batch reclaims, and settles at the attempt cap, only rows of its own type. So every
   type in the queue needs a worker, scoped or generic: an expired lease of a type nobody processes is never
   reclaimed. Rows of other types keep their leases and stay available to their own workers.
@@ -197,19 +201,21 @@ takes every row.
 The candidate reads use the claim index from `005`, led by `(status, priority, id)`. Without locks, a
 scoped read walks every row of its status that is ahead of its type in that order until it finds `$limit`
 rows of its type. That costs time, not locks, and it grows with the backlog of other types. Measured on the
-package schema with 005, one scoped due-candidate read behind due rows of another type:
+package schema with 005, one scoped due-candidate read (the worker's statement, byte comparison included)
+behind due rows of another type, median of seven runs:
 
 | Other-type due rows ahead | MySQL 8.0.46 | MariaDB 11.4 |
 | --- | --- | --- |
-| 5,000 | 7 ms | 12 ms |
-| 20,000 | 12 ms | 51 ms |
-| 50,000 | 29 ms | 115 ms |
-| 100,000 | 63 ms | 220 ms |
+| 5,000 | 4 ms | 11 ms |
+| 20,000 | 12 ms | 43 ms |
+| 50,000 | 30 ms | 105 ms |
+| 100,000 | 60 ms | 213 ms |
 
 [`006_email_queue_entity_type_claim_index.sql`](../../schema/mysql/006_email_queue_entity_type_claim_index.sql)
 adds `idx_email_queue_claim_entity_type (status, entity_type, priority, id)`, so each scoped read walks only
-its own type: 1–2 ms in every case above. Apply it after 005 only if you run scoped batches behind a large
-backlog of other types. `processBatch()` keeps using 005 (measured), and every status change then maintains
+its own type: under 1 ms in every case above. With a case-insensitive collation the index lookup also
+visits look-alike types (`Admin` for `admin`), which the byte comparison then drops. Apply it after 005 only
+if you run scoped batches behind a large backlog of other types. `processBatch()` keeps using 005 (measured), and every status change then maintains
 one more index entry. A table that already has an index led by `(status, entity_type, priority, id)` does
 not need it.
 
