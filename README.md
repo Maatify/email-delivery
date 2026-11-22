@@ -78,7 +78,7 @@ composer require maatify/email-delivery:1.2.0
 This exact version is available through Packagist. To follow the current Stable line, use
 `composer require maatify/email-delivery`.
 
-The package requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer, PSR-3 logging and
+The package requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer (6.9+ or 7), PSR-3 logging and
 `symfony/polyfill-mbstring` (`mb_strcut` without the mbstring extension).
 The production keyed and synthetic storage paths use MySQL/MariaDB with `pdo_mysql` and the package-owned
 [SQL files](schema/mysql). SQLite is used by legacy tests, not supported as keyed production storage.
@@ -88,7 +88,8 @@ Monolog is not a package dependency.
 Apply the [schema installation/upgrade](docs/upgrade.md) before adopting the keyed API. Do not run
 all numbered SQL files on a fresh installation: the binding upgrade is for an existing legacy table.
 The worker's claim index (`005`, Unreleased): fresh installs run 001, 002, then 005; legacy tables run
-002, 003, then 005; 1.2.0 installs that already applied 002 and 003 run only 005.
+002, 003, then 005; 1.2.0 installs that already applied 002 and 003 run only 005. Optional `006`
+(Unreleased) indexes scoped batches; apply it after 005 only if you use them.
 
 Synthetic recording uses an optional independent table and separate crypto domains. Its retention is
 explicitly configured by the consumer; cleanup is scheduled externally. It provides no constant-time or
@@ -143,6 +144,10 @@ need exception error mode and autocommit enabled, and the claim index `005` keep
 scanning the whole table. See the
 [processing lease](docs/book/worker.md#processing-lease) and
 [ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).
+
+Unreleased: `processBatchByEntityType($entityType, $limit)` runs a worker dedicated to one entity type in a
+shared queue; it selects, locks, reclaims and sends only rows of that type. Optional schema `006` keeps its
+reads fast behind a large backlog of other types. See [scoped batches](docs/book/worker.md#scoped-batches-one-entity-type).
 
 Keyed jobs use database UTC for due/retry selection, retry deadlines and `sent_at`. NULL-token legacy
 jobs retain local database `NOW()` and PHP-local retry calculation. The worker supports pre-binding

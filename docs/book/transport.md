@@ -5,7 +5,9 @@
 `SmtpEmailTransport(EmailTransportConfigDTO $config)` implements `EmailTransportInterface`.
 `send(string $recipientEmail, RenderedEmailDTO $email, ?string $replyToEmail=null): void` is the
 network boundary. It creates PHPMailer in exception mode, configures SMTP authentication, sets
-From/recipient, optional Reply-To, literal subject and HTML body, then calls `send()`.
+From/recipient, optional Reply-To, literal subject and HTML body, then calls `send()`. It works with
+PHPMailer 6.9+ and 7: CI sends through it to an isolated test SMTP server on PHPMailer 6.9.0 and on the
+latest 7.x, and checks the delivered sender, recipient, Reply-To, subject, HTML body and `X-Mailer`.
 
 | Configuration | Actual behavior |
 | --- | --- |

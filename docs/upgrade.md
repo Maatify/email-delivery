@@ -101,6 +101,22 @@ instants and stamps it exactly, including across daylight saving changes; see th
 session zone for the worker. The worker tells MySQL from MariaDB by the server version the connection
 reports, so a proxy in front of MariaDB must not report a MySQL version.
 
+## Scoped batch index 006 (Unreleased)
+
+[`006_email_queue_entity_type_claim_index.sql`](../schema/mysql/006_email_queue_entity_type_claim_index.sql) is
+**optional**. Apply it once, after 005, only if workers use `processBatchByEntityType()` behind a large backlog
+of other entity types; `processBatch()` does not need it. It adds
+`idx_email_queue_claim_entity_type (status, entity_type, priority, id)` with `ALGORITHM=INPLACE, LOCK=NONE`,
+with the same online-DDL limits as 005: run it off-peak with no long transactions open. Not idempotent. A
+table that already has an index led by `(status, entity_type, priority, id)` does not need it. Measured gains
+are in the [worker book](book/worker.md#index-for-scoped-batches-optional-006).
+
+## PHPMailer 7 (Unreleased)
+
+The package accepts `phpmailer/phpmailer` `^6.9 || ^7.0`, so an application can keep PHPMailer 6.9+ or move
+to 7. Nothing in the application changes. CI runs the suite, including a real SMTP send to an isolated test
+server, on PHPMailer 6.9.0 and on the latest 7.x.
+
 ## Worker processing lease (Unreleased)
 
 No other SQL change is needed. The upgraded worker stamps and renews `updated_at` on `processing` rows and
