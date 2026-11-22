@@ -145,13 +145,14 @@ which scheduled a second send of a message that had already been sent.
   - **Online, with limits:** it uses `ALGORITHM=INPLACE, LOCK=NONE`, so reads and writes continue while
     the index builds. It still takes a brief exclusive metadata lock at the start and end, waits for open
     transactions on the table, and briefly blocks sessions queued behind it. Run it off-peak; see the
-    upgrade guide. Without such an index each of the two claim reads scans and locks the whole
-  table, which is twice 1.2.0's single scan.
+    upgrade guide. Without such an index the unlocked candidate read and the pending read each scan
+    the table, and the pending read locks all of it, as 1.2.0's single scan does.
   - **Measured** on a 100,000-row table (90% `sent`, 8% `failed`, 1.5% `pending`, 0.5% `processing`),
     MySQL 8.0.46 and MariaDB 11.4 under REPEATABLE READ, 50-row batch, on the package schema and on an
     application schema that already has the index.
   - **1.2.0 without the index:** a full scan locking 100,825 rows in 56–68 ms.
-  - **This version, with the index:** about 200 rows locked (only the rows it returns) in 5–8 ms.
+  - **This version, with the index:** about 200 record locks in 5–8 ms: the index entry and primary key
+    of each row the two reads return, at most one batch of each.
     - MySQL `data_locks` shows no primary-key lock on any fresh in-flight row.
     - Enqueues at any priority, writes to finished rows and outcome writes on other workers' in-flight
       rows do not wait.

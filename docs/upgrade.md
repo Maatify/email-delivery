@@ -89,8 +89,9 @@ idempotent: if `idx_email_queue_claim` already exists, do not run it again.
 - **When to run it:** off-peak, with no long transactions open on the table. See MySQL's
   [online DDL limitations](https://dev.mysql.com/doc/refman/8.0/en/innodb-online-ddl-limitations.html).
 
-**Effect on the claim.** Without such an index each of the claim's two locking reads scans and locks the
-whole table. With it, each read walks its status in index order and stops at the batch limit. The worker
+**Effect on the claim.** Without such an index the claim scans the table twice, once without locks for
+expired leases and once for due rows, and that second read locks the whole table, as 1.2.0 does. With
+it, each read walks its status in index order and stops at the batch limit. The worker
 works either way. Measured figures and what still waits are in the
 [worker book](book/worker.md#claim-index-and-locks).
 

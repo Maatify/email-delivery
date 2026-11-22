@@ -118,8 +118,10 @@ These figures were measured on a 100,000-row table: 90% `sent`, 8% `failed`, 1.5
 | Application schema with its own `(status, priority, id)` index, 1.2.0 | ordered index read | 148–150 | 4–4.5 ms |
 | Same application schema, this version | ordered index reads; expired rows by primary key | about 200 | 5–7 ms |
 
-With the index, the claim locks only the rows it returns: the batch's pending rows and the expired rows
-it reclaims. The following no longer wait for a claim:
+"Rows locked" is the count InnoDB reports, which includes index entries. With the index, the claim
+locks only the rows its reads return, at most one batch of due `pending` rows and one batch of expired
+rows, each by its index entry and primary key; it keeps the first batch of them by priority/ID. The
+following no longer wait for a claim:
 - writes to finished rows;
 - outcome writes on other workers' in-flight rows (MySQL `data_locks` shows no primary-key lock on them);
 - enqueues at any priority.

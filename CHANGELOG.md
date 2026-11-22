@@ -18,10 +18,18 @@ Published dates below use the corresponding GitHub Release publication date in U
   settled `failed` with `processing_lease_expired`, without a send. The claim stamps the lease and
   each row renews it right before its send. Default `EmailQueueWorker::DEFAULT_PROCESSING_LEASE_SECONDS`
   (300 seconds); configurable through the optional `processingLeaseSeconds` argument.
+  - The claim reads expired-lease candidates without locks, then locks only those rows by primary key
+    and re-checks their lease. It never locks a row another worker is still sending, so that worker's
+    outcome write neither waits for the claim nor deadlocks with it.
+  - On a `TIMESTAMP` `updated_at` (some application schemas) the lease is compared as instants and
+    stamped exactly, so session zones, daylight saving changes and `ON UPDATE CURRENT_TIMESTAMP` stamps
+    do not move it. On MySQL before 8.0.19, use a fixed-offset or UTC session zone. A `DATETIME` column
+    keeps each row's own clock.
 - Schema `005_email_queue_claim_index.sql` (#13): an online claim index, `idx_email_queue_claim (status,
-  priority, id)`, for every installation without an index led by those columns. The claim runs one
-  locking read per status, in index order with the batch limit. On a 100,000-row mixed table it locks
-  about 640 rows in 11–13 ms instead of scanning and locking the whole table. See the
+  priority, id)`, for every installation without an index led by those columns. With it the claim reads
+  in index order and stops at the batch limit. On a 100,000-row mixed table a 50-row claim locks only
+  the rows its reads return (about 200 InnoDB record locks) in 5–8 ms, instead of scanning and locking
+  the whole table. See the
   [worker book](docs/book/worker.md#claim-index-and-locks).
 - The worker checks that each MySQL/MariaDB connection has autocommit enabled before using it (#13).
 
@@ -41,19 +49,9 @@ Published dates below use the corresponding GitHub Release publication date in U
   hides the lost connection and blocks the reconnect. A held warning that does not accompany a lost
   connection is never raised again, so the original exception or result reaches the caller unchanged; it
   is logged (`Database driver warning during an email queue statement`) on a best-effort basis.
-- On a `TIMESTAMP` `updated_at` (some application schemas), the lease is compared as instants for every
-  row. A fresh keyed row is no longer reclaimed by a worker in another session zone, and rows stamped by
-  `ON UPDATE CURRENT_TIMESTAMP` are judged correctly. A `DATETIME` column keeps each row's own clock.
-- The claim no longer locks rows other workers are sending. Expired-lease candidates are read without
-  locks and only those rows are locked by primary key, before the pending read. A locking scan of the
-  `processing` range had locked every in-flight row and could deadlock (1213) with another worker's
-  outcome write, losing that write.
 - The stored error message is cut on a UTF-8 character boundary (at most 128 bytes). A cut inside a
-  multibyte character made the failure write fail under strict SQL mode.
-- On a `TIMESTAMP` `updated_at`, the lease is compared as instants and stamped exactly, so a daylight
-  saving spring-forward no longer reclaims a row that is seconds old. On MySQL 8.0.19+ the stamp is a UTC
-  value with an explicit offset, and on MariaDB a direct `NOW()`; both are exact in the repeated
-  fall-back hour.
+  multibyte character made the retry/failed write fail under strict SQL mode, so the failure was never
+  recorded.
 - A status write repeated after its acknowledgement was lost (2013) has a defined effect. `sent_at`
   keeps the first recorded send time. On the repeat after a reconnect, a retry/failed write that already
   applied counts as recorded and keeps its first `retry_after`. It must match this attempt's status,
@@ -69,8 +67,8 @@ Published dates below use the corresponding GitHub Release publication date in U
 - One additive index (`005`). Fresh installs run 001, 002, then 005; legacy tables run 002, 003, then 005;
   1.2.0 installs that already applied 002 and 003 run only 005. It is built with `ALGORITHM=INPLACE,
   LOCK=NONE`: reads and writes continue, but it still takes brief metadata locks and waits for open
-  transactions, so run it off-peak. The worker works without it, but each of its two claim reads then
-  scans and locks the whole table. Rows left `processing` by an earlier version become claimable on the first
+  transactions, so run it off-peak. The worker works without it, but its claim then scans the table
+  twice and its pending read locks all of it, as 1.2.0 does. Rows left `processing` by an earlier version become claimable on the first
   upgraded batch and may be sent again; review them first, and do not run older and newer workers on
   the same table. Each row now costs two more statements (lease renewal and ownership read).
 - `PDO` instance users whose connection has autocommit off now get `UnexpectedValueException` before
