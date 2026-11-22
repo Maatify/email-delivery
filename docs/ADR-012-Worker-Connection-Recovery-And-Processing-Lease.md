@@ -105,6 +105,13 @@ which scheduled a second send of a message that had already been sent.
    - **Older MySQL:** before 8.0.19 the stamp falls back to `NOW()`, so a row stamped in that repeated hour
      can be claimed early in a session zone with daylight saving; use a fixed-offset or UTC session zone
      there.
+   - **Engine detection:** the worker chooses the stamp from the server version the connection reports
+     (`PDO::ATTR_SERVER_VERSION`), without a query; MariaDB includes `MariaDB` in it. The reported
+     version must identify the real engine. A proxy that reports a MySQL 8.0.19+ version in front of
+     MariaDB makes the worker use the offset form, which MariaDB cannot store (measured on 11.4): under
+     strict SQL mode it rejects the value (1292), so every claim of a `TIMESTAMP` table fails; without
+     strict mode it drops the offset (warning 1265) and stores the UTC time as session-local time, which
+     moves the lease by the session zone's offset.
    - **Legacy `DATETIME` rows** keep their documented local-clock contract.
 
    The claim stamps `updated_at`, and
@@ -138,7 +145,8 @@ which scheduled a second send of a message that had already been sent.
   lease as item 7 describes.
 - The stored error message is at most 128 bytes, cut on a UTF-8 character boundary (`mb_strcut`). A cut
   inside a multibyte character would fail under strict SQL mode, and the read-back compares the message
-  exactly. Without the extension, `mb_strcut` comes from Twig's required `symfony/polyfill-mbstring`.
+  exactly. Without the extension, `mb_strcut` comes from `symfony/polyfill-mbstring`, which the package
+  now requires directly (`^1.3`, the constraint Twig already requires, so no new platform requirement).
 - One additive schema file, `005_email_queue_claim_index.sql`, for every installation that has no index
   led by `(status, priority, id)`. Fresh installs run 001, 002, then 005; legacy tables run 002, 003, then
   005; 1.2.0 installs that already applied 002 and 003 run only 005.
@@ -220,4 +228,5 @@ The repository test `EmailQueueWorkerReconnectMysqlTest` runs against real MySQL
 - the attempt fence;
 - two workers racing on an expired lease (two sends, not three).
 
-`EmailQueueWorkerConnectionContractTest` covers the constructor and factory contract.
+`EmailQueueWorkerConnectionContractTest` covers the constructor and factory contract, and pins the
+`TIMESTAMP` stamp chosen for MariaDB and MySQL server version strings.
