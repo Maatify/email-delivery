@@ -115,6 +115,27 @@ final class EmailQueueWorkerConnectionContractTest extends TestCase
         self::assertStringContainsString('Packets out of order', $outer[0][1]);
     }
 
+    public function testADriverDisconnectWarningBeforeAnotherDatabaseErrorIsRaisedAgain(): void
+    {
+        $outer = $this->outerWarnings(function (): void {
+            try {
+                self::onPossiblyClosedConnection(static function (): never {
+                    self::raiseWarning('Packets out of order');
+                    $other = new PDOException('Fixture lock wait');
+                    $other->errorInfo = ['HY000', 1205, 'Fixture'];
+                    throw $other;
+                });
+                self::fail('The database error must propagate.');
+            } catch (PDOException $failure) {
+                self::assertSame('Fixture lock wait', $failure->getMessage());
+            }
+        });
+
+        self::assertCount(1, $outer);
+        self::assertSame(E_USER_WARNING, $outer[0][0]);
+        self::assertStringContainsString('Packets out of order', $outer[0][1]);
+    }
+
     public function testAnUnrelatedWarningReachesTheApplicationHandlerUnchanged(): void
     {
         $outer = $this->outerWarnings(static function (): void {
