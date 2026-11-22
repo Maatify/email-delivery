@@ -139,7 +139,7 @@ supervised process using the [worker guide](docs/how-to/setup-worker.md).
 Unreleased (after 1.2.0): construct the worker with a connection factory, `Closure(): PDO`, so it can
 replace a connection the server closed while a send was running. A `processing` row whose lease
 expires (default 300 seconds, configurable) is claimed again; delivery is at-least-once. Worker connections
-need autocommit enabled, and the claim index `005` keeps the claim from locking the whole table. See the
+need autocommit enabled, and the claim index `005` keeps the claim's reads from scanning the whole table. See the
 [processing lease](docs/book/worker.md#processing-lease) and
 [ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).
 

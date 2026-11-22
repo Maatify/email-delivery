@@ -3,8 +3,8 @@
 --   legacy table from before the keyed API: 002, 003 (once), then 005;
 --   1.2.0 install that already applied 002 and 003: only 005.
 -- Not needed when the table already has an index led by (status, priority, id). Not idempotent.
--- Without such an index the claim scans the table, and its pending read locks every row; with it
--- each claim read walks its status in (priority, id) order and stops at the batch limit.
+-- Without such an index the claim's candidate reads scan the table (without locks); with it each
+-- walks its status in (priority, id) order and stops at the batch limit.
 -- ALGORITHM=INPLACE, LOCK=NONE lets reads and writes continue while the index is built, but the
 -- statement still takes a brief exclusive metadata lock at its start and end and waits for open
 -- transactions on the table; sessions queued behind it wait too. Run it off-peak with no long

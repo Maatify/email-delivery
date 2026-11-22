@@ -17,9 +17,9 @@ is off. It never changes the setting. The worker's transaction ownership differs
    if the server closed it.
 2. Begin a transaction and discover queue columns with `SELECT * ... LIMIT 0` result metadata.
 3. Read, without locks, the ids of `processing` rows whose [processing lease](#processing-lease) has
-   expired (priority/ID order, batch limit). Lock only those rows by primary key, re-checking the lease on
-   their latest version. Then lock due `pending` rows in priority/ID order with the batch limit. Keep the
-   first rows of both by priority/ID. See [claim index and locks](#claim-index-and-locks).
+   expired and of due `pending` rows (each in priority/ID order with the batch limit). Lock only those
+   rows, by primary key in one statement, re-checking both conditions on their latest version. Keep the
+   first of them by priority/ID. See [claim index and locks](#claim-index-and-locks).
 4. Set `processing`, increment attempts and stamp the lease. Expired rows that already used every
    attempt are settled `failed` (`processing_lease_expired`) without a send. Commit before external work.
 5. Per row: renew the lease and confirm this attempt still owns the row, then decrypt recipient/payload,
@@ -95,46 +95,68 @@ Apply [`005_email_queue_claim_index.sql`](../../schema/mysql/005_email_queue_cla
 `idx_email_queue_claim (status, priority, id)` online. An existing index led by `(status, priority, id)`
 serves the same purpose, and 005 is then unnecessary.
 
-The claim never takes a lock on a row another worker is still sending:
-- **Expired leases first,** in two steps:
-  - an unlocked read of the candidate ids, walking the `processing` entries of the index in order and
-    stopping at the batch limit;
-  - a locking read of only those rows by primary key, re-checking the lease on their latest version.
-  A locking scan of the `processing` range would lock every in-flight row, both its index entry and its
-  primary key. It could then deadlock with another worker's outcome write, which locks the primary key
-  first and the index entry second.
-- **Then due `pending` rows,** a locking read in index order that stops at the batch limit. Taking the
-  primary-key locks before this read means the claim never waits for a primary key while it holds gap
-  locks in the `pending` range.
+The claim never locks a `processing` row whose lease has not expired, nor a `pending` row that is not
+due yet:
+1. **Candidates, without locks.** Two reads return ids only: `processing` rows whose lease has expired,
+   and due `pending` rows. Each walks its status in `(priority, id)` order and stops at the batch limit.
+2. **One locking read, by primary key.** Only the candidates are locked, in id order, through the
+   primary key. The read re-checks "due `pending`, or expired lease" on each row's latest version. A
+   candidate that another worker claimed or renewed meanwhile, or that the application rescheduled, is not
+   taken.
+3. **The first rows by priority/ID,** up to the batch limit.
+
+A locking scan would not work. Under REPEATABLE READ, a locking read locks every index entry it walks
+past, and the gaps between them, whether or not the row matches its conditions:
+- **On `processing`,** it would lock every in-flight row, and could deadlock with that worker's outcome
+  write, which locks the primary key first.
+- **On `pending`,** it would lock every row that is not due yet ahead of the due ones, so enqueues and
+  reschedules would wait for the claim.
+
+Because every claim locks its candidates in id order, two concurrent claims never lock in opposite
+orders. The second waits for the first to commit; its re-check then drops rows the first has taken, so
+its batch can be smaller than the limit.
+
+Delivery is at-least-once, so a lease can expire while its first send is still running. The claim can
+then lock and reclaim that row, by design; see [processing lease](#processing-lease).
 
 The due-time and lease conditions are checked row by row, because they compare each row with its own
-clock. Without the index, the unlocked read and the pending read each scan the table, and the pending
-read locks all of it, as 1.2.0 already does.
+clock. Without the index, each candidate read scans the table, without locks, and the locking read still
+goes through the primary key.
 
 These figures were measured on a 100,000-row table: 90% `sent`, 8% `failed`, 1.5% `pending`, 0.5%
 `processing`. The engines were MySQL 8.0.46 and MariaDB 11.4 under REPEATABLE READ, and the batch held
-50 rows.
+50 rows, so each candidate read returned 50 ids.
 
 | Schema and version | Claim reads | Rows locked | Claim reads (median) |
 | --- | --- | --- | --- |
-| Package schema, 1.2.0 (pending only), no index | full scan | 100,825 | 68 ms (MySQL), 56 ms (MariaDB) |
-| Package schema, this version, no index | unlocked scan, then a locking scan | 100,875 | 86 ms (MySQL), 66 ms (MariaDB) |
-| Package schema, this version, with `005` | ordered index reads; expired rows by primary key | about 200 | 7 ms (MySQL), 8 ms (MariaDB) |
-| Application schema with its own `(status, priority, id)` index, 1.2.0 | ordered index read | 148–150 | 4–4.5 ms |
-| Same application schema, this version | ordered index reads; expired rows by primary key | about 200 | 5–7 ms |
+| Package schema, 1.2.0 (pending only), no index | full locking scan | 100,825 | 68 ms (MySQL), 56 ms (MariaDB) |
+| Package schema, this version, no index | two unlocked scans; candidates by primary key | 100 | 56 ms (MySQL), 50 ms (MariaDB) |
+| Package schema, this version, with `005` | two ordered index reads; candidates by primary key | 100 | 9 ms (MySQL), 7 ms (MariaDB) |
+| Application schema with its own `(status, priority, id)` index, 1.2.0 | ordered locking index read | 148–150 | 4–4.5 ms |
+| Same application schema, this version | two ordered index reads; candidates by primary key | 100–101 | 5–10 ms |
 
-"Rows locked" is the count InnoDB reports, which includes index entries. With the index, the claim
-locks only the rows its reads return, at most one batch of due `pending` rows and one batch of expired
-rows, each by its index entry and primary key; it keeps the first batch of them by priority/ID. The
-following no longer wait for a claim:
-- writes to finished rows;
-- outcome writes on other workers' in-flight rows (MySQL `data_locks` shows no primary-key lock on them);
-- enqueues at any priority.
+"Rows locked" is the count InnoDB reports. The 101 is one page-boundary lock, described below.
 
-A write on a row the claim is reclaiming waits until the claim commits, by design.
+A second distribution puts 1,000 `pending` rows that are not due yet (scheduled or retrying in the
+future) at priority 1, ahead of one due row at priority 9. It was measured on both schemas and engines,
+with batch limits 1 and 50:
 
-Under READ COMMITTED, InnoDB takes no gap locks for this read. The worker never changes the isolation
-level.
+| Claim | Rows locked | Waited for the claim |
+| --- | --- | --- |
+| A locking `pending` scan (before this change) | 1,008–2,005; 3 where an index led by `(status, retry_after)` served it | reschedules of those rows and enqueues; with that index, every enqueue |
+| This version | 1, the due row's primary key | only writes to the due row itself |
+
+What waits for an open claim, and what does not:
+- **Never waits:** writes to rows that are not candidates, including outcome writes on in-flight rows,
+  rows that are not due yet and finished rows, and enqueues at any priority.
+- **Waits until the claim commits** (a few milliseconds, before any send): writes to its candidates. That
+  includes a candidate whose re-check failed, because InnoDB keeps the lock it took to read the row.
+
+The locking read locks only the candidate rows, by their primary-key records. When a candidate is the
+first record on its page, MySQL can also take a next-key lock on the previous page's boundary, because
+the in-order read passes it. That lock covers only the gap between the candidate and the id just before
+it, where new auto-increment ids never land. No enqueue, reschedule or outcome write waited in any
+measurement. The worker never changes the isolation level.
 
 ## Lost connections
 

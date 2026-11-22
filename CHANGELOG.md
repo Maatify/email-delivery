@@ -18,19 +18,20 @@ Published dates below use the corresponding GitHub Release publication date in U
   settled `failed` with `processing_lease_expired`, without a send. The claim stamps the lease and
   each row renews it right before its send. Default `EmailQueueWorker::DEFAULT_PROCESSING_LEASE_SECONDS`
   (300 seconds); configurable through the optional `processingLeaseSeconds` argument.
-  - The claim reads expired-lease candidates without locks, then locks only those rows by primary key
-    and re-checks their lease. It never locks a row another worker is still sending, so that worker's
-    outcome write neither waits for the claim nor deadlocks with it.
+  - The claim reads its candidates without locks (expired leases and due `pending` rows), then locks
+    only those rows, by primary key in one statement, re-checking them on their latest version. It never
+    locks a `processing` row whose lease has not expired, nor a row that is not due yet, so outcome
+    writes on in-flight rows, reschedules and enqueues do not wait for it. Under at-least-once delivery,
+    a row whose lease expired while its first send was still running can be locked and claimed again.
   - On a `TIMESTAMP` `updated_at` (some application schemas) the lease is compared as instants and
     stamped exactly, so session zones, daylight saving changes and `ON UPDATE CURRENT_TIMESTAMP` stamps
     do not move it. On MySQL before 8.0.19, use a fixed-offset or UTC session zone. A `DATETIME` column
     keeps each row's own clock.
 - Schema `005_email_queue_claim_index.sql` (#13): an online claim index, `idx_email_queue_claim (status,
-  priority, id)`, for every installation without an index led by those columns. With it the claim reads
-  in index order and stops at the batch limit. On a 100,000-row mixed table a 50-row claim locks only
-  the rows its reads return (about 200 InnoDB record locks) in 5–8 ms, instead of scanning and locking
-  the whole table. See the
-  [worker book](docs/book/worker.md#claim-index-and-locks).
+  priority, id)`, for every installation without an index led by those columns. With it each candidate
+  read walks its status in index order and stops at the batch limit, instead of scanning the table.
+  On a 100,000-row mixed table a 50-row claim's reads take 7–9 ms with it and 50–56 ms without it; either
+  way it locks only its candidates. See the [worker book](docs/book/worker.md#claim-index-and-locks).
 - The worker checks that each MySQL/MariaDB connection has autocommit enabled before using it (#13).
 
 ### Fixed
@@ -70,8 +71,8 @@ Published dates below use the corresponding GitHub Release publication date in U
 - One additive index (`005`). Fresh installs run 001, 002, then 005; legacy tables run 002, 003, then 005;
   1.2.0 installs that already applied 002 and 003 run only 005. It is built with `ALGORITHM=INPLACE,
   LOCK=NONE`: reads and writes continue, but it still takes brief metadata locks and waits for open
-  transactions, so run it off-peak. The worker works without it, but its claim then scans the table
-  twice and its pending read locks all of it, as 1.2.0 does. Rows left `processing` by an earlier version become claimable on the first
+  transactions, so run it off-peak. The worker works without it, but its candidate reads then scan the
+  table (without locks). Rows left `processing` by an earlier version become claimable on the first
   upgraded batch and may be sent again; review them first, and do not run older and newer workers on
   the same table. Each row now costs two more statements (lease renewal and ownership read).
 - `PDO` instance users whose connection has autocommit off now get `UnexpectedValueException` before

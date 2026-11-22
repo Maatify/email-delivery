@@ -76,20 +76,25 @@ which scheduled a second send of a message that had already been sent.
      row. The row stays `processing` for its lease. A failed retry/failed write is logged as
      `Email job failure was not recorded`.
 5. **Processing lease in the claim (owner decision: at-least-once).** The claim selects due `pending`
-   rows and `processing` rows whose `updated_at` is older than the lease. It never locks a row another
-   worker is still sending:
-   - **Expired leases:** an unlocked read of the candidate ids in `(priority, id)` order with the batch
-     limit, then a locking read of only those rows by primary key that re-checks the lease on their latest
-     version.
-   - **Due `pending` rows:** a locking read in `(priority, id)` order with the batch limit.
-   - **Merge:** the first rows of both are kept.
-   - **Why the expired-lease scan does not lock:** a locking scan of the `processing` range would lock
-     every in-flight row (index entry and primary key), and another worker's outcome write locks the
-     primary key first and the index entry second. The two then deadlock (measured: 1213).
-   - **Why the order matters:** taking the primary-key locks before the pending read means the claim
-     never waits for a primary key while it holds gap locks in the `pending` range.
+   rows and `processing` rows whose `updated_at` is older than the lease. It never locks a `processing`
+   row whose lease has not expired, nor a `pending` row that is not due yet:
+   - **Candidates:** two unlocked reads of ids, expired leases and due `pending` rows, each in
+     `(priority, id)` order with the batch limit.
+   - **One locking read** of only those rows, by primary key (forced to `PRIMARY`) in id order, that
+     re-checks `(due pending) OR (expired lease)` on their latest version.
+   - **Merge:** the first rows by `(priority, id)`, up to the limit.
+   - **Why no locking scan:** under REPEATABLE READ a locking read locks every index entry it walks past,
+     and the gaps between them, whether or not the row matches. On `processing` that locked every
+     in-flight row, and another worker's outcome write locks the primary key first, so the two deadlocked
+     (measured: 1213). On `pending` it locked every row that was not due yet ahead of the due ones, so
+     enqueues and reschedules waited for the claim (measured: up to 2,005 record locks for one due row
+     behind 1,000 rows scheduled or retrying in the future).
+   - **Why id order in one statement:** concurrent claims lock in the same order, so they wait for each
+     other instead of deadlocking. The later claim's re-check then drops rows the earlier one took.
+   - **At-least-once:** a lease can expire while its first send is still running; the claim can then
+     lock and reclaim that row, by design.
    With `idx_email_queue_claim (status, priority, id)` from schema 005, or an existing index led by those
-   columns, the reads walk the index in order and stop at the limit.
+   columns, each candidate read walks the index in order and stops at the limit.
    The lease clock follows the type of `updated_at`, read from the column metadata in every batch:
    - **`DATETIME`** (the package schema): the row's own clock, `UTC_TIMESTAMP()` for keyed rows and
      `NOW()` for legacy rows.
@@ -153,22 +158,31 @@ which scheduled a second send of a message that had already been sent.
   - **Online, with limits:** it uses `ALGORITHM=INPLACE, LOCK=NONE`, so reads and writes continue while
     the index builds. It still takes a brief exclusive metadata lock at the start and end, waits for open
     transactions on the table, and briefly blocks sessions queued behind it. Run it off-peak; see the
-    upgrade guide. Without such an index the unlocked candidate read and the pending read each scan
-    the table, and the pending read locks all of it, as 1.2.0's single scan does.
+    upgrade guide. Without such an index each candidate read scans the table, without locks; the
+    locking read still goes through the primary key.
   - **Measured** on a 100,000-row table (90% `sent`, 8% `failed`, 1.5% `pending`, 0.5% `processing`),
     MySQL 8.0.46 and MariaDB 11.4 under REPEATABLE READ, 50-row batch, on the package schema and on an
     application schema that already has the index.
   - **1.2.0 without the index:** a full scan locking 100,825 rows in 56–68 ms.
-  - **This version, with the index:** about 200 record locks in 5–8 ms: the index entry and primary key
-    of each row the two reads return, at most one batch of each.
-    - MySQL `data_locks` shows no primary-key lock on any fresh in-flight row.
-    - Enqueues at any priority, writes to finished rows and outcome writes on other workers' in-flight
-      rows do not wait.
-    - Only a write on a row the claim is reclaiming waits.
-  - **This version, without the index:** the pending read locks the whole table, as in 1.2.0 (66–86 ms).
+  - **This version, with the index:** the two candidate reads walk the index and the locking read takes
+    the 100 candidates' primary-key records (50 of each), in 5–10 ms. No enqueue, write to a finished
+    row, reschedule or outcome write on another worker's in-flight row waited. MySQL `data_locks` showed
+    no lock on any other row. On the application schema it sometimes also showed one next-key lock on a
+    primary-key page boundary just before a candidate that starts its page (101 locks). That lock covers
+    only the gap between two existing ids.
+  - **This version, without the index:** each candidate read scans the table without locks, and the
+    claim still locks only its 100 candidates (50–56 ms).
+  - **1,000 rows not due ahead of one due row** (scheduled or retrying in the future, batch limit 1 and
+    50, both schemas, both engines): the locking scan this replaces held 1,008–2,005 record locks, so
+    reschedules of those rows and enqueues waited. Where an application index led by
+    `(status, retry_after)` served that read it held 3, but its next-key lock still made every enqueue
+    wait. This claim holds one primary-key record lock, on the due row, and nothing else waits.
+  - **Waits until the claim commits:** writes to its candidates, including a candidate whose re-check
+    failed, because InnoDB keeps the lock it took to read the row.
   - **Rejected designs:**
     - a single `pending OR processing` read needs a filesort and locked every active row;
-    - a locking `processing` read locked every in-flight row and deadlocked with outcome writes.
+    - a locking `processing` read locked every in-flight row and deadlocked with outcome writes;
+    - a locking `pending` read locked every row that was not due ahead of the due ones.
 - For a `processing` row, `updated_at` now holds the worker-maintained lease time.
   It matches each writer's clock: `NOW()` for legacy rows and the UTC acceptance time for keyed rows.
   External scripts that select stale rows by `updated_at` now measure from the claim or renewal.
@@ -216,6 +230,13 @@ The repository test `EmailQueueWorkerReconnectMysqlTest` runs against real MySQL
 - the claim reading each status in index order, locking about a batch while finished rows stay writable;
 - the claim taking no lock on 40 fresh in-flight rows, and a concurrent outcome write on an in-flight
   row never deadlocking with it (three connections);
+- 1,000 rows not due (scheduled or retrying in the future) ahead of a due one, batch limit 1 and 50:
+  only the due row's primary key is locked, and reschedules and enqueues at priority 1, 5 and 9 never
+  wait;
+- expired, fresh and pending rows together: the locking read uses `PRIMARY`, locks exactly the
+  candidates' primary keys and claims the expired rows, and no outcome write on a fresh row waits;
+- candidates renewed or rescheduled between the unlocked read and the lock are not taken, and two
+  claims never take the same expired row;
 - a failure reason cut inside a multibyte character, including on a lost-acknowledgement repeat;
 - a `TIMESTAMP` lease across daylight saving spring-forward and fall-back in `America/New_York`, for the
   claim, renewal and `ON UPDATE` stamps;

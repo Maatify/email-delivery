@@ -103,7 +103,8 @@ minimum 1) is how long a `processing` row may go without renewal: the claim stam
 row renews it before its send. On a `DATETIME` column each row keeps its own clock. On a `TIMESTAMP`
 column (detected per batch) the lease is compared as instants and stamped exactly. An expired row under the attempt cap is claimed and
 sent again; at the cap it is settled `failed` with `processing_lease_expired`. The claim reads through
-`idx_email_queue_claim` from schema 005; without it the claim locks the whole table. A repeat after a lost
+`idx_email_queue_claim` from schema 005; without it the claim's candidate reads scan the table. Either way it
+locks only its candidates, by primary key. A repeat after a lost
 acknowledgement keeps the first `sent_at` and `retry_after`. Retry/failed writes are
 fenced by attempt; the `sent` write is not. A failed `sent` write never writes pending/failed: it is
 logged (`Email sent but status write failed`) and the row is left to its lease. For every outcome write,
