@@ -113,8 +113,11 @@ final class EmailQueueWorker
      * trailing spaces count, whatever the column's collation), for a worker dedicated to one
      * kind of mail in a shared queue. Everything else is as processBatch(): the same claim, lease, fence, retry
      * rules and checks. The filter applies to both candidate reads (due `pending` rows and expired leases) and to
-     * the primary-key locking read that re-checks them, so the batch never selects, locks, reclaims or settles a
-     * row of another type. A row whose `entity_type` is NULL never matches; only processBatch() handles it.
+     * the primary-key locking read that re-checks them, so the batch never takes, claims, reclaims, settles or
+     * sends a row of another type, and never locks a row that was not a candidate of its own type at the
+     * unlocked read. A candidate whose type (or state) changed before the lock fails the re-check and is not
+     * taken; it stays locked until the claim transaction ends under REPEATABLE READ and is released at once
+     * under READ COMMITTED. A row whose `entity_type` is NULL never matches; only processBatch() handles it.
      *
      * @throws InvalidArgumentException when $entityType is empty
      */

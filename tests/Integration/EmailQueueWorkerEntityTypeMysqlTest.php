@@ -17,8 +17,10 @@ use Tests\Support\WorkerRecordingLogger;
 use Tests\Support\WorkerRecordingTransport;
 
 /**
- * A worker dedicated to one entity type in a queue shared with other types: processBatchByEntityType() selects,
- * locks, reclaims and processes only rows of its type, and leaves every other row unlocked for its own worker.
+ * A worker dedicated to one entity type in a queue shared with other types: processBatchByEntityType() takes,
+ * reclaims and processes only rows of its type, and locks only candidates of its type (a candidate whose type
+ * changed before the lock is not taken, and is locked only until the claim ends); every other row stays
+ * unlocked for its own worker.
  */
 final class EmailQueueWorkerEntityTypeMysqlTest extends IsolatedEmailMysqlTestCase
 {
@@ -294,6 +296,106 @@ final class EmailQueueWorkerEntityTypeMysqlTest extends IsolatedEmailMysqlTestCa
         self::assertTrue($changed);
         self::assertSame(0, $this->transport->calls, 'The exact entity type is re-checked under the lock.');
         self::assertSame(['pending', 0], $this->state($job));
+    }
+
+    /** @return iterable<string, array{string, bool, string}> */
+    public static function shapesAndIsolationLevels(): iterable
+    {
+        foreach (self::tableShapes() as $name => [$shape, $with006]) {
+            foreach (['REPEATABLE READ', 'READ COMMITTED'] as $isolation) {
+                yield "$name, $isolation" => [$shape, $with006, $isolation];
+            }
+        }
+    }
+
+    /**
+     * Review D1: a candidate of the batch's type whose entity_type changes between the unlocked read and the lock
+     * fails the re-check, so it is neither claimed nor sent. The locking read still reads it by primary key: under
+     * REPEATABLE READ InnoDB keeps that lock until the claim transaction ends, under READ COMMITTED it releases it
+     * right after the re-check. A row that was never a candidate of the batch's type is never locked.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('shapesAndIsolationLevels')]
+    public function testACandidateWhoseEntityTypeChangedBeforeTheLockIsLockedOnlyUntilTheClaimEnds(string $shape, bool $with006, string $isolation): void
+    {
+        $this->shapeTable($shape, $with006);
+        $changes = $this->enqueue('admin-changes', 'admin', 1);
+        $kept = $this->enqueue('admin-kept', 'admin', 2);
+        // Never candidates of the batch: a row of another type, and a row of its type that is not due yet.
+        $user = $this->enqueue('user-1', 'user', 1);
+        $later = $this->enqueue('admin-later', 'admin', 1);
+        $this->pdo->exec("UPDATE cd_email_queue SET scheduled_at = UTC_TIMESTAMP() + INTERVAL 1 DAY WHERE id = $later");
+        $connection = new EmailQueueFaultPdo();
+        $connection->exec("SET SESSION TRANSACTION ISOLATION LEVEL $isolation");
+        $workerThread = (int) self::scalar($connection, 'SELECT CONNECTION_ID()');
+        $mysql = self::isMysql($connection);
+        $observed = ['changed' => false, 'isolation' => null, 'rows_locked' => null, 'locked_ids' => null, 'waited' => []];
+        $connection->afterExecuteHook = function (string $sql) use (&$observed, $workerThread, $mysql, $changes, $user, $later): void {
+            if (str_starts_with(ltrim($sql), 'SELECT id FROM') && str_contains($sql, "status = 'pending'") && !$observed['changed']) {
+                // Between the unlocked candidate read and the lock, another connection moves the candidate to
+                // another type and commits.
+                $observed['changed'] = true;
+                $this->pdo->exec("UPDATE cd_email_queue SET entity_type = 'user' WHERE id = $changes");
+                return;
+            }
+            if (!str_contains($sql, 'FOR UPDATE')) {
+                return;
+            }
+            // The claim transaction is still open, right after its locking read.
+            $other = self::connection();
+            $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
+            usleep(150_000); // information_schema.INNODB_TRX is refreshed at most every 0.1 s
+            $observed['isolation'] = self::scalar($other, "SELECT trx_isolation_level FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = $workerThread");
+            $observed['rows_locked'] = (int) self::scalar($other, "SELECT trx_rows_locked FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = $workerThread");
+            if ($mysql) {
+                $locks = ($other->query("
+                    SELECT l.LOCK_DATA FROM performance_schema.data_locks l
+                    JOIN performance_schema.threads t ON t.THREAD_ID = l.THREAD_ID
+                    WHERE t.PROCESSLIST_ID = $workerThread AND l.LOCK_TYPE = 'RECORD' AND l.LOCK_DATA <> 'supremum pseudo-record'") ?: throw new \LogicException('data_locks'))->fetchAll(PDO::FETCH_COLUMN);
+                $observed['locked_ids'] = array_map(static fn (mixed $id): int => is_scalar($id) ? (int) $id : 0, $locks);
+                sort($observed['locked_ids']);
+            }
+            foreach (['the candidate that changed type' => $changes, 'a row of another type' => $user, 'a row of its type that is not due' => $later] as $what => $id) {
+                $other->beginTransaction();
+                try {
+                    $other->exec("UPDATE cd_email_queue SET last_error = 'probe' WHERE id = $id");
+                } catch (PDOException $failure) {
+                    $observed['waited'][] = "$what: " . ($failure->errorInfo[1] ?? '?');
+                } finally {
+                    $other->rollBack();
+                }
+            }
+        };
+
+        $this->worker($connection)->processBatchByEntityType('admin');
+
+        $repeatableRead = $isolation === 'REPEATABLE READ';
+        self::assertTrue($observed['changed']);
+        self::assertSame($isolation, $observed['isolation'], 'The claim ran at the isolation level under test.');
+        self::assertSame(1, $this->transport->calls, 'Only the candidate that kept its type is sent.');
+        self::assertSame(['sent', 1], $this->state($kept));
+        self::assertSame(['pending', 0], $this->state($changes), 'The candidate that changed type is neither claimed nor sent.');
+        self::assertSame(['pending', 0], $this->state($later));
+        self::assertSame(
+            $repeatableRead ? ['the candidate that changed type: 1205'] : [],
+            $observed['waited'],
+            $repeatableRead
+                ? 'Under REPEATABLE READ the changed candidate stays locked while the claim transaction is open; rows that were never candidates are not locked.'
+                : 'Under READ COMMITTED the lock on the changed candidate is released right after the re-check; rows that were never candidates are not locked.',
+        );
+        if ($mysql) {
+            self::assertSame($repeatableRead ? [$changes, $kept] : [$kept], $observed['locked_ids'], 'The claim\'s record locks (MySQL data_locks).');
+        } else {
+            self::assertSame($repeatableRead ? 2 : 1, $observed['rows_locked'], 'The claim\'s locked rows (MariaDB INNODB_TRX).');
+        }
+
+        // The lock ends with the claim transaction, and the row is its new type's to process.
+        $after = self::connection();
+        $after->exec('SET SESSION innodb_lock_wait_timeout = 1');
+        $after->exec("UPDATE cd_email_queue SET last_error = 'write after the claim' WHERE id = $changes");
+        self::assertSame('write after the claim', $this->column($changes, 'last_error'));
+        $this->worker($this->pdo)->processBatchByEntityType('user');
+        self::assertSame(['sent', 1], $this->state($changes));
+        self::assertSame(['sent', 1], $this->state($user));
     }
 
     /** @return iterable<string, array{string}> */

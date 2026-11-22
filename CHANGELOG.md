@@ -12,8 +12,11 @@ Published dates below use the corresponding GitHub Release publication date in U
   rows whose `entity_type` equals the given type byte for byte (case, accents and trailing spaces count,
   whatever the column's collation), for a worker dedicated to one kind of mail in a shared
   queue. The filter applies to both candidate reads and to the primary-key locking read that re-checks
-  them, so the batch never selects, locks, reclaims or settles a row of another type. A NULL `entity_type`
-  is taken only by `processBatch()`, an empty type is rejected, and `processBatch()` is unchanged. See the
+  them, so the batch never takes, claims, reclaims, settles or sends a row of another type, and never locks
+  a row that was not a candidate of its own type at the unlocked read. A candidate whose type (or state)
+  changed before the lock fails the re-check and is not taken; it stays locked until the claim transaction
+  ends under REPEATABLE READ and is released at once under READ COMMITTED. A NULL `entity_type` is taken
+  only by `processBatch()`, an empty type is rejected, and `processBatch()` is unchanged. See the
   [worker book](docs/book/worker.md#scoped-batches-one-entity-type).
 - Optional schema `006_email_queue_entity_type_claim_index.sql` (#12), for scoped batches behind a large
   backlog of other entity types: one scoped read took about 60 ms (MySQL 8.0) and about 210 ms (MariaDB

@@ -179,8 +179,16 @@ kind of mail, such as administrator mail, in a queue that also holds other kinds
 unchanged and still takes every row.
 
 - **Where the filter applies:** both unlocked candidate reads (due `pending` rows and expired leases) and
-  the primary-key locking read that re-checks them. The batch never selects or locks a row of another type,
-  and a candidate whose type changed before the lock is not taken.
+  the primary-key locking read that re-checks them. A scoped batch never takes, claims, reclaims, settles or
+  sends a row of another type, and never locks a row that was not a candidate of its own type at the
+  unlocked read.
+- **A candidate that changed before the lock:** if a candidate's type (or its state) changes between the
+  unlocked read and the lock, it fails the re-check and is not taken. The locking read has still read it by
+  primary key, so, as with every candidate (see [what waits for an open claim](#what-waits-for-an-open-claim)),
+  it stays locked until the claim transaction ends under REPEATABLE READ (the default), and is released right
+  after the re-check under READ COMMITTED. A row that moved from `admin` to `user` in that window can
+  therefore keep a short lock from the `admin` batch. Measured on MySQL 8.0 and MariaDB 11.4, on the package
+  schema and on an application-like table, with and without 006.
 - **Exactly means byte for byte:** case, accents and trailing spaces count, whatever the column's collation.
   The package schema compares `entity_type` with `utf8mb4_unicode_ci`, which ignores all three, so each
   statement follows the collation equality (which an index on `entity_type` can serve) with a comparison of

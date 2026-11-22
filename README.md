@@ -146,8 +146,10 @@ scanning the whole table. See the
 [ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).
 
 Unreleased: `processBatchByEntityType($entityType, $limit)` runs a worker dedicated to one entity type in a
-shared queue; it selects, locks, reclaims and sends only rows of that type. Optional schema `006` keeps its
-reads fast behind a large backlog of other types. See [scoped batches](docs/book/worker.md#scoped-batches-one-entity-type).
+shared queue; it takes, reclaims and sends only rows of that type, and locks only candidates of that type
+(a candidate whose type changes before the lock is not taken, though it can stay locked until the claim
+ends). Optional schema `006` keeps its reads fast behind a large backlog of other types. See
+[scoped batches](docs/book/worker.md#scoped-batches-one-entity-type).
 
 Keyed jobs use database UTC for due/retry selection, retry deadlines and `sent_at`. NULL-token legacy
 jobs retain local database `NOW()` and PHP-local retry calculation. The worker supports pre-binding
