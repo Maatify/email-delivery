@@ -78,7 +78,8 @@ composer require maatify/email-delivery:1.2.0
 This exact version is available through Packagist. To follow the current Stable line, use
 `composer require maatify/email-delivery`.
 
-The package requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer and PSR-3 logging.
+The package requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer, PSR-3 logging and
+`symfony/polyfill-mbstring` (`mb_strcut` without the mbstring extension).
 The production keyed and synthetic storage paths use MySQL/MariaDB with `pdo_mysql` and the package-owned
 [SQL files](schema/mysql). SQLite is used by legacy tests, not supported as keyed production storage.
 Supply your application PDO, crypto provider/context provider, renderer, transport and logger through DI.

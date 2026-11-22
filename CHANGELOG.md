@@ -62,6 +62,9 @@ Published dates below use the corresponding GitHub Release publication date in U
 - Semantic versioning: additive and backward compatible within 1.x (a minor release). The first
   parameter keeps its name and position and widens to `PDO|Closure`; a trailing optional parameter
   and a public constant are added. The class stays `final` and is no longer declared `readonly`.
+- `symfony/polyfill-mbstring` (`^1.3`) is now a direct requirement, for `mb_strcut` without the mbstring
+  extension. Twig already requires it with the same constraint, so installed packages and platform
+  requirements do not change.
 - Delivery is at-least-once: a message may be sent twice when its `sent` status cannot be recorded
   even after one reconnect, or when one render and send outlasts the lease.
 - One additive index (`005`). Fresh installs run 001, 002, then 005; legacy tables run 002, 003, then 005;

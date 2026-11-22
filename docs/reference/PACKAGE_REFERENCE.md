@@ -12,8 +12,8 @@ are linked rather than redefined here. Guides/examples explain use and do not cr
 
 ## Runtime requirements and boundaries
 
-PHP ^8.2, JSON and PDO are declared requirements. `maatify/crypto`, Twig, PHPMailer and PSR logging
-are production dependencies; inject instances rather than relying on a framework or environment loader.
+PHP ^8.2, JSON and PDO are declared requirements. `maatify/crypto`, Twig, PHPMailer, PSR logging and
+`symfony/polyfill-mbstring` are production dependencies; inject instances rather than relying on a framework or environment loader.
 SQL adapters use MySQL/MariaDB/PDO MySQL and package schema. SQLite appears only in legacy tests.
 The application owns email intent, authentication/authorization, PDO/keys, template files, SMTP policy,
 process supervision, log redaction, schema migration and synthetic cleanup scheduling.
