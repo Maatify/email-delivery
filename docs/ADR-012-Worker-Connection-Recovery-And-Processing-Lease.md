@@ -76,17 +76,36 @@ which scheduled a second send of a message that had already been sent.
      row. The row stays `processing` for its lease. A failed retry/failed write is logged as
      `Email job failure was not recorded`.
 5. **Processing lease in the claim (owner decision: at-least-once).** The claim selects due `pending`
-   rows and `processing` rows whose `updated_at` is older than the lease. It does so in one locking read
-   per status, each in `(priority, id)` order with the batch limit, then keeps the first rows of both. With
-   `idx_email_queue_claim (status, priority, id)` from schema 005, or an existing index led by those
-   columns, each read walks its status in index order and stops at the limit.
+   rows and `processing` rows whose `updated_at` is older than the lease. It never locks a row another
+   worker is still sending:
+   - **Expired leases:** an unlocked read of the candidate ids in `(priority, id)` order with the batch
+     limit, then a locking read of only those rows by primary key that re-checks the lease on their latest
+     version.
+   - **Due `pending` rows:** a locking read in `(priority, id)` order with the batch limit.
+   - **Merge:** the first rows of both are kept.
+   - **Why the expired-lease scan does not lock:** a locking scan of the `processing` range would lock
+     every in-flight row (index entry and primary key), and another worker's outcome write locks the
+     primary key first and the index entry second. The two then deadlock (measured: 1213).
+   - **Why the order matters:** taking the primary-key locks before the pending read means the claim
+     never waits for a primary key while it holds gap locks in the `pending` range.
+   With `idx_email_queue_claim (status, priority, id)` from schema 005, or an existing index led by those
+   columns, the reads walk the index in order and stop at the limit.
    The lease clock follows the type of `updated_at`, read from the column metadata in every batch:
    - **`DATETIME`** (the package schema): the row's own clock, `UTC_TIMESTAMP()` for keyed rows and
      `NOW()` for legacy rows.
-   - **`TIMESTAMP`** (some application schemas): `NOW()` for every row. A TIMESTAMP holds an instant and
-     converts it by session zone, so writing `UTC_TIMESTAMP()` into it would store the UTC wall clock read
-     in the session zone. A worker in another zone, or a stamp from `ON UPDATE CURRENT_TIMESTAMP`, would
-     then be off by the zone offset.
+   - **`TIMESTAMP`** (some application schemas): the lease is compared as instants,
+     `UNIX_TIMESTAMP(updated_at) < UNIX_TIMESTAMP() - lease`. A TIMESTAMP holds an instant and converts it
+     by session zone, so a wall-clock comparison is off by the zone offset across workers in different
+     zones. It is also wrong across daylight saving jumps: just after a spring-forward jump it reclaims a
+     row that is only seconds old, while a fall-back only delays the reclaim (measured on both engines).
+   - **The `TIMESTAMP` stamp** stores the exact instant even in the repeated hour after a fall-back. On
+     MySQL 8.0.19+ it is `CONCAT(UTC_TIMESTAMP(), '+00:00')`, because there MySQL stores any local-time
+     expression as the earlier of the two instants. On MariaDB it is a directly assigned `NOW()`, which
+     MariaDB stores exactly. Stamps from `ON UPDATE CURRENT_TIMESTAMP` are exact on both.
+   - **Older MySQL:** before 8.0.19 the stamp falls back to `NOW()`, so a row stamped in that repeated hour
+     can be claimed early in a session zone with daylight saving; use a fixed-offset or UTC session zone
+     there.
+   - **Legacy `DATETIME` rows** keep their documented local-clock contract.
 
    The claim stamps `updated_at`, and
    each row renews it right before it is rendered and sent. A stale row under the attempt cap is claimed
@@ -117,6 +136,9 @@ which scheduled a second send of a message that had already been sent.
 - Delivery is at-least-once. A message can be sent twice when its send succeeds and its `sent` status
   cannot be recorded even after one reconnect, or when one render and send outlasts the lease. Size the
   lease as item 7 describes.
+- The stored error message is at most 128 bytes, cut on a UTF-8 character boundary (`mb_strcut`). A cut
+  inside a multibyte character would fail under strict SQL mode, and the read-back compares the message
+  exactly. Without the extension, `mb_strcut` comes from Twig's required `symfony/polyfill-mbstring`.
 - One additive schema file, `005_email_queue_claim_index.sql`, for every installation that has no index
   led by `(status, priority, id)`. Fresh installs run 001, 002, then 005; legacy tables run 002, 003, then
   005; 1.2.0 installs that already applied 002 and 003 run only 005.
@@ -126,18 +148,18 @@ which scheduled a second send of a message that had already been sent.
     upgrade guide. Without such an index each of the two claim reads scans and locks the whole
   table, which is twice 1.2.0's single scan.
   - **Measured** on a 100,000-row table (90% `sent`, 8% `failed`, 1.5% `pending`, 0.5% `processing`),
-    MySQL 8.0.46 and MariaDB 11.4 under REPEATABLE READ, 50-row batch.
-  - **Package schema:**
-    - 1.2.0: a full scan locking 100,825 rows in 56–68 ms.
-    - This version without the index: about 100–130 ms.
-    - With 005: two ordered index reads, locking 632–640 rows in 11–13 ms, so writes to finished rows
-      and enqueues at a normal priority do not wait.
-  - **An application schema that already has the index:** 1.2.0 locked 148–150 rows in about 4 ms; this
-    version locks 633–641 in 8.5–11 ms, because the `processing` read walks the in-flight rows.
-  - A single `pending OR processing` read was rejected: it needs a filesort over every active row, so it
-    locked all of them (4,003–4,005), blocked enqueues and was slower.
-  - **Still waiting** until the claim commits: an INSERT at the end of the `pending` range (the lowest
-    priority), and on MariaDB a write to another in-flight `processing` row read by the claim.
+    MySQL 8.0.46 and MariaDB 11.4 under REPEATABLE READ, 50-row batch, on the package schema and on an
+    application schema that already has the index.
+  - **1.2.0 without the index:** a full scan locking 100,825 rows in 56–68 ms.
+  - **This version, with the index:** about 200 rows locked (only the rows it returns) in 5–8 ms.
+    - MySQL `data_locks` shows no primary-key lock on any fresh in-flight row.
+    - Enqueues at any priority, writes to finished rows and outcome writes on other workers' in-flight
+      rows do not wait.
+    - Only a write on a row the claim is reclaiming waits.
+  - **This version, without the index:** the pending read locks the whole table, as in 1.2.0 (66–86 ms).
+  - **Rejected designs:**
+    - a single `pending OR processing` read needs a filesort and locked every active row;
+    - a locking `processing` read locked every in-flight row and deadlocked with outcome writes.
 - For a `processing` row, `updated_at` now holds the worker-maintained lease time.
   It matches each writer's clock: `NOW()` for legacy rows and the UTC acceptance time for keyed rows.
   External scripts that select stale rows by `updated_at` now measure from the claim or renewal.
@@ -183,6 +205,11 @@ The repository test `EmailQueueWorkerReconnectMysqlTest` runs against real MySQL
 - connections without autocommit, from a factory (attribute or init command), on reconnect, or as a
   plain `PDO`;
 - the claim reading each status in index order, locking about a batch while finished rows stay writable;
+- the claim taking no lock on 40 fresh in-flight rows, and a concurrent outcome write on an in-flight
+  row never deadlocking with it (three connections);
+- a failure reason cut inside a multibyte character, including on a lost-acknowledgement repeat;
+- a `TIMESTAMP` lease across daylight saving spring-forward and fall-back in `America/New_York`, for the
+  claim, renewal and `ON UPDATE` stamps;
 - a `TIMESTAMP` `updated_at` in `+03:00` and `-05:00` sessions: fresh rows are never reclaimed from another
   zone, the lease boundary holds for keyed and legacy rows, and rows an older worker claimed (stamped
   by `ON UPDATE CURRENT_TIMESTAMP`) are judged by that stamp;

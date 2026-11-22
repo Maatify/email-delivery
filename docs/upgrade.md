@@ -95,8 +95,10 @@ works either way. Measured figures and what still waits are in the
 [worker book](book/worker.md#claim-index-and-locks).
 
 **Application-owned tables.** A table whose `updated_at` is a `TIMESTAMP` (for example with `ON UPDATE
-CURRENT_TIMESTAMP`) is supported: the worker detects the type in every batch and runs the lease on
-`NOW()` for every row.
+CURRENT_TIMESTAMP`) is supported. The worker detects the type in every batch, compares the lease as
+instants and stamps it exactly, including across daylight saving changes; see the
+[worker book](book/worker.md#processing-lease). On MySQL older than 8.0.19, use a fixed-offset or UTC
+session zone for the worker.
 
 ## Worker processing lease (Unreleased)
 

@@ -41,10 +41,19 @@ Published dates below use the corresponding GitHub Release publication date in U
   hides the lost connection and blocks the reconnect. A held warning that does not accompany a lost
   connection is never raised again, so the original exception or result reaches the caller unchanged; it
   is logged (`Database driver warning during an email queue statement`) on a best-effort basis.
-- On a `TIMESTAMP` `updated_at` (some application schemas), the lease is stamped and compared with
-  `NOW()` for every row. A fresh keyed row is no longer reclaimed by a worker in another session zone,
-  and rows stamped by `ON UPDATE CURRENT_TIMESTAMP` are judged correctly. A `DATETIME` column keeps each
-  row's own clock.
+- On a `TIMESTAMP` `updated_at` (some application schemas), the lease is compared as instants for every
+  row. A fresh keyed row is no longer reclaimed by a worker in another session zone, and rows stamped by
+  `ON UPDATE CURRENT_TIMESTAMP` are judged correctly. A `DATETIME` column keeps each row's own clock.
+- The claim no longer locks rows other workers are sending. Expired-lease candidates are read without
+  locks and only those rows are locked by primary key, before the pending read. A locking scan of the
+  `processing` range had locked every in-flight row and could deadlock (1213) with another worker's
+  outcome write, losing that write.
+- The stored error message is cut on a UTF-8 character boundary (at most 128 bytes). A cut inside a
+  multibyte character made the failure write fail under strict SQL mode.
+- On a `TIMESTAMP` `updated_at`, the lease is compared as instants and stamped exactly, so a daylight
+  saving spring-forward no longer reclaims a row that is seconds old. On MySQL 8.0.19+ the stamp is a UTC
+  value with an explicit offset, and on MariaDB a direct `NOW()`; both are exact in the repeated
+  fall-back hour.
 - A status write repeated after its acknowledgement was lost (2013) has a defined effect. `sent_at`
   keeps the first recorded send time. On the repeat after a reconnect, a retry/failed write that already
   applied counts as recorded and keeps its first `retry_after`. It must match this attempt's status,

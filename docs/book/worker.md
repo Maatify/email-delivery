@@ -16,9 +16,10 @@ is off. It never changes the setting. The worker's transaction ownership differs
 1. Check autocommit (see above). With a factory, confirm the connection with `SELECT 1` and replace it
    if the server closed it.
 2. Begin a transaction and discover queue columns with `SELECT * ... LIMIT 0` result metadata.
-3. Lock, in priority/ID order with `FOR UPDATE` and the batch limit, due `pending` rows, then
-   `processing` rows whose [processing lease](#processing-lease) has expired: one locking read per status
-   through the [claim index](#claim-index-and-locks). Keep the first rows by priority/ID.
+3. Read, without locks, the ids of `processing` rows whose [processing lease](#processing-lease) has
+   expired (priority/ID order, batch limit). Lock only those rows by primary key, re-checking the lease on
+   their latest version. Then lock due `pending` rows in priority/ID order with the batch limit. Keep the
+   first rows of both by priority/ID. See [claim index and locks](#claim-index-and-locks).
 4. Set `processing`, increment attempts and stamp the lease. Expired rows that already used every
    attempt are settled `failed` (`processing_lease_expired`) without a send. Commit before external work.
 5. Per row: renew the lease and confirm this attempt still owns the row, then decrypt recipient/payload,
@@ -53,8 +54,18 @@ The lease clock follows the type of `updated_at`, read from the column metadata 
 - **`DATETIME`** (the package schema): wall-clock values. Each row keeps its own clock: database UTC for
   keyed rows, database-local `NOW()` for legacy rows.
 - **`TIMESTAMP`** (some application schemas): instants that the database converts by session zone.
-  Every row is stamped and compared with `NOW()`. That holds in any session zone, across workers in
-  different zones, and against stamps from `ON UPDATE CURRENT_TIMESTAMP`, such as a 1.2.0 worker's claim.
+  - **Comparison:** as instants, `UNIX_TIMESTAMP(updated_at) < UNIX_TIMESTAMP() - lease`. That holds in
+    any session zone, across workers in different zones, across daylight saving jumps, and against stamps
+    from `ON UPDATE CURRENT_TIMESTAMP`, such as a 1.2.0 worker's claim.
+  - **Stamp:** an expression that stores the exact instant even in the repeated hour after a daylight
+    saving fall-back. On MySQL 8.0.19+ that is a UTC value with an explicit offset, because there MySQL
+    stores a local `NOW()` as the earlier of the two instants, one hour early. On MariaDB it is a directly
+    assigned `NOW()`, which MariaDB stores exactly.
+  - **Older MySQL:** before 8.0.19 the stamp is `NOW()`. In a session zone with daylight saving, a row
+    stamped in that repeated hour can then look one hour older and be claimed early; use a fixed-offset
+    or UTC session zone there.
+  - **Legacy `DATETIME` rows** keep their documented local-clock contract, so a daylight saving jump in
+    the session zone moves their lease exactly as it moves their due times.
 
 Nothing bounds one render and send. The transport's timeout (10 seconds by default) applies to each
 socket operation, and one message needs several: connecting, the SMTP greeting, TLS, authentication
@@ -77,32 +88,43 @@ even after one reconnect, or when one render and send outlasts the lease. See
 
 Apply [`005_email_queue_claim_index.sql`](../../schema/mysql/005_email_queue_claim_index.sql), which adds
 `idx_email_queue_claim (status, priority, id)` online. An existing index led by `(status, priority, id)`
-serves the same purpose, and 005 is then unnecessary. The claim runs one locking read per status, each
-in `(priority, id)` order with the batch limit. With the index, each read walks its status in index
-order and stops at the limit, so it locks about a batch of rows. The due-time and lease conditions are
-checked row by row, because they compare each row with its own clock. A single read over both statuses
-would need a filesort over every active row and would lock them all. Without the index, each read
-scans and locks the whole table.
+serves the same purpose, and 005 is then unnecessary.
+
+The claim never takes a lock on a row another worker is still sending:
+- **Expired leases first,** in two steps:
+  - an unlocked read of the candidate ids, walking the `processing` entries of the index in order and
+    stopping at the batch limit;
+  - a locking read of only those rows by primary key, re-checking the lease on their latest version.
+  A locking scan of the `processing` range would lock every in-flight row, both its index entry and its
+  primary key. It could then deadlock with another worker's outcome write, which locks the primary key
+  first and the index entry second.
+- **Then due `pending` rows,** a locking read in index order that stops at the batch limit. Taking the
+  primary-key locks before this read means the claim never waits for a primary key while it holds gap
+  locks in the `pending` range.
+
+The due-time and lease conditions are checked row by row, because they compare each row with its own
+clock. Without the index, the unlocked read and the pending read each scan the table, and the pending
+read locks all of it, as 1.2.0 already does.
 
 These figures were measured on a 100,000-row table: 90% `sent`, 8% `failed`, 1.5% `pending`, 0.5%
 `processing`. The engines were MySQL 8.0.46 and MariaDB 11.4 under REPEATABLE READ, and the batch held
 50 rows.
 
-| Schema and version | Claim reads | Rows locked | Whole claim transaction (median) |
+| Schema and version | Claim reads | Rows locked | Claim reads (median) |
 | --- | --- | --- | --- |
 | Package schema, 1.2.0 (pending only), no index | full scan | 100,825 | 68 ms (MySQL), 56 ms (MariaDB) |
-| Package schema, this version, no index | two full scans | 100,825 | 132 ms (MySQL), 101 ms (MariaDB) |
-| Package schema, this version, with `005` | two ordered index reads | 632–640 | 13 ms (MySQL), 11 ms (MariaDB) |
-| Application schema with its own `(status, priority, id)` index, 1.2.0 | one ordered index read | 148–150 | 4–4.5 ms |
-| Same application schema, this version | two ordered index reads | 633–641 | 8.5–11 ms |
+| Package schema, this version, no index | unlocked scan, then a locking scan | 100,875 | 86 ms (MySQL), 66 ms (MariaDB) |
+| Package schema, this version, with `005` | ordered index reads; expired rows by primary key | about 200 | 7 ms (MySQL), 8 ms (MariaDB) |
+| Application schema with its own `(status, priority, id)` index, 1.2.0 | ordered index read | 148–150 | 4–4.5 ms |
+| Same application schema, this version | ordered index reads; expired rows by primary key | about 200 | 5–7 ms |
 
-With the index, writes to finished rows and enqueues at a normal priority never wait for a claim. The
-`processing` read walks the in-flight rows until it finds the batch's expired ones; the test data has
-500 in flight, more than a real queue. Under REPEATABLE READ, the following still wait until the claim
-commits, which is the time shown above:
-- an INSERT that lands at the very end of the `pending` range (the lowest priority), because of the gap
-  lock before the first `processing` entry;
-- on MariaDB, a write to another in-flight `processing` row read by the claim.
+With the index, the claim locks only the rows it returns: the batch's pending rows and the expired rows
+it reclaims. The following no longer wait for a claim:
+- writes to finished rows;
+- outcome writes on other workers' in-flight rows (MySQL `data_locks` shows no primary-key lock on them);
+- enqueues at any priority.
+
+A write on a row the claim is reclaiming waits until the claim commits, by design.
 
 Under READ COMMITTED, InnoDB takes no gap locks for this read. The worker never changes the isolation
 level.
