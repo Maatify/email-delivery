@@ -12,7 +12,7 @@ Published dates below use the corresponding GitHub Release publication date in U
   opens its connection on first use and replaces one the server closed: before the claim transaction,
   and once around each single status statement after driver error 2006, 2013 or 4031. A `PDO` instance
   is still accepted and cannot reconnect. See [ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md),
-  which awaits the owner's acceptance.
+  [accepted by the owner](https://github.com/Maatify/email-delivery/pull/14#issuecomment-7079019339) on 2026-11-22; the change remains Unreleased.
 - Processing lease (#13): a `processing` row whose `updated_at` is older than the lease is claimed
   again by a later batch, under the attempt cap as a new attempt that is sent again. At the cap it is
   settled `failed` with `processing_lease_expired`, without a send. The claim stamps the lease and
