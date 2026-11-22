@@ -64,6 +64,12 @@ These run exactly once more on a new connection after driver error 2006 (server 
 (lost during a statement) or 4031 (disconnected for inactivity, how MySQL 8.0.24+ reports an expired
 `wait_timeout`). Any other error propagates. The claim transaction itself is never retried.
 
+Before PHP 8.4, the MySQL driver also raises a PHP warning such as `Packets out of order` when it reads
+the server's disconnect. While these statements run, the worker holds such warnings back, so an
+application handler that turns warnings into exceptions cannot hide the lost connection. A held warning
+is dropped when the connection loss is confirmed; the worker logs that loss itself. Otherwise the
+warning is raised again as `E_USER_WARNING`. Any other warning reaches your error handler unchanged.
+
 ## Failure and recovery limits
 
 Normal row errors use the [fixed delay tables](retry-mechanism.md). Batch/transaction/query failures

@@ -475,7 +475,8 @@ final class EmailQueueWorker
     private function withReconnect(Closure $operation): mixed
     {
         try {
-            return $operation($this->connection ?? $this->reconnect());
+            $pdo = $this->connection ?? $this->reconnect();
+            return self::onPossiblyClosedConnection(static fn (): mixed => $operation($pdo));
         } catch (PDOException $failure) {
             if ($this->connectionFactory === null || !self::isConnectionLost($failure)) {
                 throw $failure;
@@ -483,8 +484,60 @@ final class EmailQueueWorker
             $this->logger->warning('Email queue connection was closed by the server; reconnecting once', [
                 'error_code' => $failure->errorInfo[1] ?? null,
             ]);
-            return $operation($this->reconnect());
+            $fresh = $this->reconnect();
+            return self::onPossiblyClosedConnection(static fn (): mixed => $operation($fresh));
         }
+    }
+
+    /**
+     * Runs statements on a connection the server may have closed while it idled. Before PHP 8.4, mysqlnd
+     * also raises an E_WARNING such as "Packets out of order" when it reads the server's disconnect, and an
+     * application error handler that turns warnings into exceptions would hide the PDOException behind it.
+     * Such warnings are held back while the statements run. They are dropped when a PDOException reports
+     * the lost connection, which the worker logs and handles, and raised again otherwise. Every other
+     * warning goes to the previously installed handler unchanged.
+     *
+     * @template T
+     * @param Closure(): T $operation
+     * @return T
+     */
+    private static function onPossiblyClosedConnection(Closure $operation): mixed
+    {
+        $held = [];
+        $previous = null;
+        $previous = set_error_handler(
+            static function (int $level, string $message, string $file = '', int $line = 0) use (&$held, &$previous): bool {
+                if (self::isDisconnectWarning($message)) {
+                    $held[] = $message;
+                    return true;
+                }
+                return is_callable($previous) && (bool) $previous($level, $message, $file, $line);
+            },
+            E_WARNING
+        );
+        try {
+            return $operation();
+        } catch (PDOException $failure) {
+            if (self::isConnectionLost($failure)) {
+                $held = [];
+            }
+            throw $failure;
+        } finally {
+            restore_error_handler();
+            foreach ($held as $message) {
+                trigger_error($message, E_USER_WARNING);
+            }
+        }
+    }
+
+    private static function isDisconnectWarning(string $message): bool
+    {
+        foreach (['Packets out of order', 'server has gone away', 'Error while sending', 'Error while reading', "Error reading result set's header"] as $symptom) {
+            if (str_contains($message, $symptom)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Confirms the connection is open before the claim transaction starts, replacing it when the server closed it. */
@@ -497,12 +550,11 @@ final class EmailQueueWorker
             return $this->connection;
         }
 
+        $connection = $this->connection;
         try {
-            $probe = $this->connection->query('SELECT 1');
-            if ($probe !== false) {
-                $probe->closeCursor();
-            }
-            return $this->connection;
+            $probe = self::onPossiblyClosedConnection(static fn (): ?\PDOStatement => $connection->query('SELECT 1') ?: null);
+            $probe?->closeCursor();
+            return $connection;
         } catch (PDOException $failure) {
             if (!self::isConnectionLost($failure)) {
                 throw $failure;

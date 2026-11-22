@@ -83,6 +83,29 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame([], $this->logger->contexts('error', self::SENT_UNRECORDED));
     }
 
+    public function testAnApplicationThatTurnsWarningsIntoExceptionsStillRecoversFromAnIdleTimeout(): void
+    {
+        $job = $this->enqueue('key-1');
+        $worker = $this->worker($this->factory(self::IDLE_TIMEOUT_SECONDS));
+        $this->transport->duringSend = static function (int $call): void {
+            sleep(self::IDLE_TIMEOUT_SECONDS + 2);
+        };
+        // A common framework setting. Before PHP 8.4 the driver warns when it reads an idle-timeout disconnect.
+        set_error_handler(static function (int $level, string $message, string $file, int $line): never {
+            throw new \ErrorException($message, 0, $level, $file, $line);
+        });
+        try {
+            $error = $this->errorOf(static fn () => $worker->processBatch());
+        } finally {
+            restore_error_handler();
+        }
+
+        self::assertNull($error);
+        self::assertSame(['sent', '1'], [$this->row($job)['status'], $this->row($job)['attempts']]);
+        self::assertSame(1, $this->transport->calls);
+        self::assertCount(2, $this->connections);
+    }
+
     public function testATransportFailureIsRecordedForRetryOnAFreshConnectionAfterTheServerClosedTheOldOne(): void
     {
         $job = $this->enqueue('key-1');

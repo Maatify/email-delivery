@@ -8,6 +8,7 @@ use InvalidArgumentException;
 use Maatify\EmailDelivery\Renderer\TwigEmailRenderer;
 use Maatify\EmailDelivery\Worker\EmailQueueWorker;
 use PDO;
+use PDOException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
@@ -79,6 +80,83 @@ final class EmailQueueWorkerConnectionContractTest extends TestCase
         $this->expectException(UnexpectedValueException::class);
         $this->expectExceptionMessage('exception error mode');
         $worker->processBatch();
+    }
+
+    public function testADriverDisconnectWarningIsDroppedWhenTheLostConnectionIsReported(): void
+    {
+        $outer = $this->outerWarnings(function (): void {
+            try {
+                self::onPossiblyClosedConnection(static function (): never {
+                    self::raiseWarning('Packets out of order');
+                    $lost = new PDOException('Fixture lost connection');
+                    $lost->errorInfo = ['HY000', 4031, 'Fixture'];
+                    throw $lost;
+                });
+                self::fail('The lost connection must propagate.');
+            } catch (PDOException $failure) {
+                self::assertSame('Fixture lost connection', $failure->getMessage());
+            }
+        });
+
+        self::assertSame([], $outer, 'The application handler never sees the disconnect symptom.');
+    }
+
+    public function testADriverDisconnectWarningWithoutALostConnectionIsRaisedAgain(): void
+    {
+        $outer = $this->outerWarnings(static function (): void {
+            self::assertSame('done', self::onPossiblyClosedConnection(static function (): string {
+                self::raiseWarning('Packets out of order');
+                return 'done';
+            }));
+        });
+
+        self::assertCount(1, $outer);
+        self::assertSame(E_USER_WARNING, $outer[0][0]);
+        self::assertStringContainsString('Packets out of order', $outer[0][1]);
+    }
+
+    public function testAnUnrelatedWarningReachesTheApplicationHandlerUnchanged(): void
+    {
+        $outer = $this->outerWarnings(static function (): void {
+            self::onPossiblyClosedConnection(static function (): void {
+                self::raiseWarning('unrelated-fixture');
+            });
+        });
+
+        self::assertCount(1, $outer);
+        self::assertSame(E_WARNING, $outer[0][0]);
+        self::assertStringContainsString('unrelated-fixture', $outer[0][1]);
+    }
+
+    /** @param \Closure(): mixed $operation */
+    private static function onPossiblyClosedConnection(\Closure $operation): mixed
+    {
+        return (new \ReflectionMethod(EmailQueueWorker::class, 'onPossiblyClosedConnection'))->invoke(null, $operation);
+    }
+
+    /** A real engine E_WARNING whose text contains $marker. */
+    private static function raiseWarning(string $marker): void
+    {
+        file_get_contents(sys_get_temp_dir() . '/email-delivery-missing-' . bin2hex(random_bytes(4)) . '/' . $marker);
+    }
+
+    /**
+     * @param \Closure(): void $scenario
+     * @return list<array{int, string}> warnings the application's own handler received
+     */
+    private function outerWarnings(\Closure $scenario): array
+    {
+        $received = [];
+        set_error_handler(static function (int $level, string $message) use (&$received): bool {
+            $received[] = [$level, $message];
+            return true;
+        });
+        try {
+            $scenario();
+        } finally {
+            restore_error_handler();
+        }
+        return $received;
     }
 
     /** @param PDO|\Closure(): PDO $connection */

@@ -27,6 +27,9 @@ Published dates below use the corresponding GitHub Release publication date in U
   left to its lease. A connection still lost after one reconnect is rethrown and stops the batch;
   any other error continues with the next row.
 - Retry/failed writes are fenced by attempt, so a stale attempt never overwrites a newer outcome.
+- Before PHP 8.4, the driver's disconnect warning (`Packets out of order`) no longer reaches the
+  application during these statements, so a handler that turns warnings into exceptions no longer
+  hides the lost connection and blocks the reconnect.
 
 ### Compatibility and limits
 - Semantic versioning: additive and backward compatible within 1.x (a minor release). The first

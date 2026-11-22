@@ -31,6 +31,10 @@ which scheduled a second send of a message that had already been sent.
    `wait_timeout`; MariaDB reports 2006), the worker reconnects and runs them exactly once more. Any
    other error propagates unchanged. Applied twice, each of these statements leaves the same row state,
    which is why 2013, whose first execution may have applied, is safe here.
+   Before PHP 8.4, mysqlnd also raises a `Packets out of order` warning when it reads that disconnect.
+   While these statements run, such warnings are held back so an application handler that converts
+   warnings into exceptions cannot mask the `PDOException`. They are dropped once the loss is confirmed
+   and logged, and raised again otherwise.
 3. **Never around a transaction.** The claim is never retried. Before `beginTransaction()` the worker
    checks its connection with `SELECT 1` and replaces it if the server closed it; nothing has run yet.
 4. **A send is never followed by a retry write.** After a successful send, a failed `sent` write never
