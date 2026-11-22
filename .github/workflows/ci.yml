@@ -11,13 +11,15 @@ permissions:
 
 jobs:
   quality:
-    name: Quality Checks (PHP ${{ matrix.php }})
+    name: Quality Checks (PHP ${{ matrix.php }}, PHPMailer ${{ matrix.phpmailer }})
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
         php: [ "8.2", "8.3", "8.4", "8.5" ]
+        # The lowest supported PHPMailer, and the latest 7.x.
+        phpmailer: [ "6.9.0", "^7.0" ]
 
     services:
       mysql:
@@ -33,12 +35,25 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=20
+      # Isolated test SMTP server for the real SMTP path; accepts any credentials, no TLS.
+      smtp:
+        image: axllent/mailpit:v1.30.4
+        env:
+          MP_SMTP_AUTH_ACCEPT_ANY: "1"
+          MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+        ports:
+          - 1025:1025
+          - 8025:8025
 
     env:
       EMAIL_DELIVERY_IT_DSN: "mysql:host=127.0.0.1;port=3306;dbname=email_delivery_test;charset=utf8mb4"
       EMAIL_DELIVERY_IT_USER: root
       EMAIL_DELIVERY_IT_PASS: fixture-email-only
       EMAIL_DELIVERY_IT_REQUIRED: "1"
+      EMAIL_DELIVERY_SMTP_HOST: 127.0.0.1
+      EMAIL_DELIVERY_SMTP_PORT: "1025"
+      EMAIL_DELIVERY_SMTP_API_URL: http://127.0.0.1:8025
+      EMAIL_DELIVERY_SMTP_REQUIRED: "1"
 
     steps:
       # -------------------------------------------------
@@ -71,6 +86,16 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
 
+      - name: Resolve PHPMailer ${{ matrix.phpmailer }}
+        run: composer update phpmailer/phpmailer --with "phpmailer/phpmailer:${{ matrix.phpmailer }}" --no-interaction --prefer-dist --no-progress
+
+      - name: Show and check the resolved PHPMailer
+        env:
+          PHPMAILER_EXPECTED: ${{ matrix.phpmailer == '6.9.0' && '6.9.0' || '7.' }}
+        run: |
+          composer show phpmailer/phpmailer | grep -E '^(name|versions)'
+          php -r 'require "vendor/autoload.php"; $v = ltrim((string) Composer\InstalledVersions::getPrettyVersion("phpmailer/phpmailer"), "v"); $want = (string) getenv("PHPMAILER_EXPECTED"); echo "Resolved PHPMailer $v (expected $want*)\n"; exit(str_starts_with($v, $want) ? 0 : 1);'
+
       # -------------------------------------------------
       # 5) Dump optimized autoload
       # -------------------------------------------------
@@ -81,9 +106,9 @@ jobs:
       # 6) Run PHPUnit (Unit Tests)
       # -------------------------------------------------
       - name: Verify safe skips without a database configuration
-        run: env -u EMAIL_DELIVERY_IT_DSN -u EMAIL_DELIVERY_IT_REQUIRED composer test
+        run: env -u EMAIL_DELIVERY_IT_DSN -u EMAIL_DELIVERY_IT_REQUIRED -u EMAIL_DELIVERY_SMTP_HOST -u EMAIL_DELIVERY_SMTP_REQUIRED composer test
 
-      - name: Run PHPUnit including required real MySQL tests
+      - name: Run PHPUnit including required real MySQL and SMTP tests
         run: composer test
 
       # -------------------------------------------------
