@@ -23,7 +23,7 @@ abstract class IsolatedEmailMysqlTestCase extends TestCase
         $this->pdo = self::connection();
         $this->pdo->exec('DROP TABLE IF EXISTS cd_email_enqueue_receipts');
         $this->pdo->exec('DROP TABLE IF EXISTS cd_email_queue');
-        foreach (['001_email_queue.sql', '002_email_enqueue_receipts.sql'] as $file) {
+        foreach (['001_email_queue.sql', '002_email_enqueue_receipts.sql', '005_email_queue_claim_index.sql'] as $file) {
             $sql = file_get_contents(dirname(__DIR__, 2) . '/schema/mysql/' . $file);
             if ($sql === false) {
                 throw new RuntimeException('Package schema is missing.');

@@ -77,6 +77,9 @@ final class EmailQueueWorker
     /** Replaced only outside a transaction, after the server closed it. */
     private ?PDO $connection;
 
+    /** The PDO instance whose autocommit setting was already confirmed (factory connections are checked when created). */
+    private ?PDO $autocommitConfirmed = null;
+
     private readonly int $processingLeaseSeconds;
 
     /**
@@ -348,9 +351,11 @@ final class EmailQueueWorker
 
         try {
             // Not fenced by attempt: the email went out, so `sent` wins even if another batch reclaimed or settled the row.
+            // sent_at keeps the first recorded send: a repeat after a lost acknowledgement, or a second real send
+            // after a lease expiry, changes nothing.
             $this->withReconnect(static function (PDO $pdo) use ($table, $id, $clock): void {
                 $pdo->prepare(
-                    "UPDATE `$table` SET status = 'sent', sent_at = $clock WHERE id = :id"
+                    "UPDATE `$table` SET status = 'sent', sent_at = COALESCE(sent_at, $clock) WHERE id = :id"
                 )->execute(['id' => $id]);
             });
         } catch (Throwable $failure) {
@@ -408,7 +413,7 @@ final class EmailQueueWorker
                          WHERE id = :id AND status = 'processing' AND attempts = :attempt"
                     );
                     $statement->execute(['error' => $errorMsg, 'id' => $id, 'attempt' => $attempts]);
-                    return $statement->rowCount() === 1;
+                    return $statement->rowCount() === 1 || self::storedOutcome($pdo, $table, $id, $attempts, 'failed') !== null;
                 });
 
                 if ($recorded) {
@@ -433,7 +438,12 @@ final class EmailQueueWorker
                             WHERE id = :id AND status = 'processing' AND attempts = :attempt
                         ");
                         $statement->execute(['error' => $errorMsg, 'retry_after' => $retryAfter, 'id' => $id, 'attempt' => $attempts]);
-                        return [$statement->rowCount() === 1, $retryAfter];
+                        if ($statement->rowCount() === 1) {
+                            return [true, $retryAfter];
+                        }
+                        $stored = self::storedOutcome($pdo, $table, $id, $attempts, 'pending');
+                        // Already recorded by this attempt (a repeat after a lost acknowledgement): report the stored retry time.
+                        return $stored === null ? [false, $retryAfter] : [true, $stored['retry_after'] ?? $retryAfter];
                     }
                 );
 
@@ -480,7 +490,7 @@ final class EmailQueueWorker
     {
         try {
             $pdo = $this->connection ?? $this->reconnect();
-            return self::onPossiblyClosedConnection(static fn (): mixed => $operation($pdo));
+            return $this->onPossiblyClosedConnection(static fn (): mixed => $operation($pdo));
         } catch (PDOException $failure) {
             if ($this->connectionFactory === null || !self::isConnectionLost($failure)) {
                 throw $failure;
@@ -489,7 +499,7 @@ final class EmailQueueWorker
                 'error_code' => $failure->errorInfo[1] ?? null,
             ]);
             $fresh = $this->reconnect();
-            return self::onPossiblyClosedConnection(static fn (): mixed => $operation($fresh));
+            return $this->onPossiblyClosedConnection(static fn (): mixed => $operation($fresh));
         }
     }
 
@@ -498,14 +508,15 @@ final class EmailQueueWorker
      * also raises an E_WARNING such as "Packets out of order" when it reads the server's disconnect, and an
      * application error handler that turns warnings into exceptions would hide the PDOException behind it.
      * Such warnings are held back while the statements run. They are dropped when a PDOException reports
-     * the lost connection, which the worker logs and handles, and raised again otherwise. Every other
-     * warning goes to the previously installed handler unchanged.
+     * the lost connection, which the worker logs and handles; otherwise they are logged, and the original
+     * exception or result passes through unchanged. Every other error goes to the previously installed
+     * handler unchanged.
      *
      * @template T
      * @param Closure(): T $operation
      * @return T
      */
-    private static function onPossiblyClosedConnection(Closure $operation): mixed
+    private function onPossiblyClosedConnection(Closure $operation): mixed
     {
         $held = [];
         $previous = null;
@@ -530,8 +541,14 @@ final class EmailQueueWorker
             throw $failure;
         } finally {
             restore_error_handler();
+            // Never raised again: an application handler that throws on warnings would replace the original
+            // exception or result. A held warning is recorded through the worker's logger instead.
             foreach ($held as $message) {
-                trigger_error($message, E_USER_WARNING);
+                try {
+                    $this->logger->warning('Database driver warning during an email queue statement', ['warning' => $message]);
+                } catch (Throwable) {
+                    // The original exception or result always wins over a failing logger.
+                }
             }
         }
     }
@@ -553,12 +570,16 @@ final class EmailQueueWorker
             return $this->reconnect();
         }
         if ($this->connectionFactory === null) {
+            if ($this->autocommitConfirmed !== $this->connection) {
+                self::requireAutocommit($this->connection);
+                $this->autocommitConfirmed = $this->connection;
+            }
             return $this->connection;
         }
 
         $connection = $this->connection;
         try {
-            $probe = self::onPossiblyClosedConnection(static fn (): ?\PDOStatement => $connection->query('SELECT 1') ?: null);
+            $probe = $this->onPossiblyClosedConnection(static fn (): ?\PDOStatement => $connection->query('SELECT 1') ?: null);
             $probe?->closeCursor();
             return $connection;
         } catch (PDOException $failure) {
@@ -585,7 +606,28 @@ final class EmailQueueWorker
         if ($connection->getAttribute(PDO::ATTR_ERRMODE) !== PDO::ERRMODE_EXCEPTION) {
             throw new UnexpectedValueException('The email queue connection factory must return a PDO in exception error mode.');
         }
+        self::requireAutocommit($connection);
         return $this->connection = $connection;
+    }
+
+    /**
+     * Status writes must commit on their own: with autocommit off, a write after a send could stay uncommitted
+     * and be lost with the connection. Checked before the connection claims or writes anything; the worker
+     * never changes the setting itself. Production storage is MySQL/MariaDB; other drivers back legacy tests.
+     */
+    private static function requireAutocommit(PDO $pdo): void
+    {
+        if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'mysql') {
+            return;
+        }
+        $statement = $pdo->query('SELECT @@SESSION.autocommit');
+        $autocommit = $statement === false ? null : $statement->fetchColumn();
+        if ($statement !== false) {
+            $statement->closeCursor();
+        }
+        if (!in_array($autocommit, [1, '1'], true)) {
+            throw new UnexpectedValueException('The email queue worker requires a connection with autocommit enabled (@@SESSION.autocommit = 1).');
+        }
     }
 
     /**
@@ -603,6 +645,22 @@ final class EmailQueueWorker
     private static function isConnectionLost(PDOException $failure): bool
     {
         return in_array($failure->errorInfo[1] ?? null, self::CONNECTION_LOST_CODES, true);
+    }
+
+    /**
+     * A fenced outcome write that matched no row: when the row already holds this attempt's outcome, an earlier
+     * execution of the same write applied and only its acknowledgement was lost.
+     *
+     * @return array{retry_after: string|null}|null
+     */
+    private static function storedOutcome(PDO $pdo, string $table, int $id, int $attempt, string $status): ?array
+    {
+        $statement = $pdo->prepare("SELECT retry_after FROM `$table` WHERE id = :id AND status = :status AND attempts = :attempt");
+        $statement->execute(['id' => $id, 'status' => $status, 'attempt' => $attempt]);
+        /** @var array{retry_after: string|null}|false $row */
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        $statement->closeCursor();
+        return $row === false ? null : $row;
     }
 
     private function hasReceiptBinding(PDO $pdo): bool

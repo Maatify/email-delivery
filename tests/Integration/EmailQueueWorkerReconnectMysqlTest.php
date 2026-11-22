@@ -37,14 +37,35 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
     private array $connections = [];
     /** @var list<int> server-side ids of those connections */
     private array $connectionIds = [];
+    /** @var list<int> server thread ids of every connection a test opened besides the fixture connection */
+    private array $openedThreads = [];
     /** Connections handed out from this index on are already closed by the server (a database still unreachable). */
     private int $closedFrom = PHP_INT_MAX;
 
     protected function setUp(): void
     {
         parent::setUp();
+        // A failing scenario may leave a worker connection holding locks; never wait on it forever.
+        $this->pdo->exec('SET SESSION lock_wait_timeout = 30');
         $this->transport = new WorkerRecordingTransport();
         $this->logger = new WorkerRecordingLogger();
+    }
+
+    protected function tearDown(): void
+    {
+        // A failed scenario can keep a worker connection alive (for example through an exception trace) with
+        // uncommitted work. Close it on the server so its locks never block the fixture's DROP TABLE.
+        if (isset($this->pdo)) {
+            foreach ($this->openedThreads as $thread) {
+                try {
+                    $this->pdo->exec('KILL CONNECTION ' . $thread);
+                } catch (PDOException) {
+                    // Already closed.
+                }
+            }
+        }
+        $this->connections = [];
+        parent::tearDown();
     }
 
     public function testASendThatOutlivesTheIdleTimeoutIsRecordedSentOnceAndTheNextBatchStillRuns(): void
@@ -384,28 +405,36 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame([], $this->logger->contexts('error', 'Email job failed'));
     }
 
-    /** @return iterable<string, array{int}> */
+    /** @return iterable<string, array{int, string}> */
     public static function priorAttempts(): iterable
     {
-        yield 'retry write' => [0];
-        yield 'final failure write' => [3];
+        yield 'retry write, newer attempt sent' => [0, "status = 'sent', sent_at = UTC_TIMESTAMP()"];
+        yield 'final failure write, newer attempt sent' => [3, "status = 'sent', sent_at = UTC_TIMESTAMP()"];
+        // The newer attempt already holds the same status this stale attempt writes, under another attempt number.
+        yield 'retry write, newer attempt rescheduled' => [0, "status = 'pending', retry_after = UTC_TIMESTAMP(), last_error = 'newer'"];
+        yield 'final failure write, newer attempt failed' => [3, "status = 'failed', last_error = 'newer'"];
     }
 
     #[DataProvider('priorAttempts')]
-    public function testAStaleAttemptCannotOverwriteTheOutcomeOfTheAttemptThatReclaimedItsRow(int $priorAttempts): void
+    public function testAStaleAttemptCannotOverwriteTheOutcomeOfTheAttemptThatReclaimedItsRow(int $priorAttempts, string $newerOutcome): void
     {
         $job = $this->enqueue('key-1');
         $this->pdo->exec("UPDATE cd_email_queue SET attempts = $priorAttempts WHERE id = $job");
         $this->transport->fail = true;
-        $this->transport->duringSend = function () use ($job): void {
-            // Another worker reclaimed the row after the lease and already sent it.
-            $this->pdo->exec("UPDATE cd_email_queue SET attempts = attempts + 1, status = 'sent', sent_at = UTC_TIMESTAMP() WHERE id = $job");
+        $this->transport->duringSend = function () use ($job, $newerOutcome): void {
+            // Another worker reclaimed the row after the lease and already recorded its own outcome.
+            $this->pdo->exec("UPDATE cd_email_queue SET attempts = attempts + 1, $newerOutcome WHERE id = $job");
         };
 
         $this->worker($this->pdo)->processBatch();
 
-        self::assertSame('sent', $this->row($job)['status']);
-        self::assertSame('', $this->row($job)['last_error']);
+        self::assertSame(1, preg_match("/status = '([a-z]+)'/", $newerOutcome, $status));
+        $row = $this->row($job);
+        self::assertSame([$status[1] ?? '', (string) ($priorAttempts + 2)], [$row['status'], $row['attempts']], 'The newer attempt\'s outcome stands.');
+        self::assertStringNotContainsString('smtp_transport_error', $row['last_error'], 'The stale failure never overwrote it.');
+        // The same status under another attempt number is not this attempt's outcome.
+        self::assertSame([], $this->logger->contexts('info', 'Email job scheduled for retry'));
+        self::assertSame([], $this->logger->contexts('warning', 'Email job permanently failed'));
         self::assertCount(1, $this->logger->contexts('warning', 'Email job outcome not recorded: ' . self::NOT_OWNED));
     }
 
@@ -552,6 +581,195 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame(true, $this->logger->contexts('error', 'Email job failure was not recorded')[0]['connection_lost'] ?? null);
     }
 
+    // ── connection requirements (review point 1) ──────────────────
+
+    /** @return iterable<string, array{array<int, mixed>}> */
+    public static function autocommitOffOptions(): iterable
+    {
+        yield 'PDO autocommit attribute' => [[PDO::ATTR_AUTOCOMMIT => false]];
+        // Pdo\Mysql::ATTR_INIT_COMMAND on PHP 8.4+, the same value as PDO::MYSQL_ATTR_INIT_COMMAND before it.
+        $initCommand = defined('Pdo\\Mysql::ATTR_INIT_COMMAND') ? constant('Pdo\\Mysql::ATTR_INIT_COMMAND') : constant('PDO::MYSQL_ATTR_INIT_COMMAND');
+        self::assertIsInt($initCommand);
+        yield 'session init command' => [[$initCommand => 'SET SESSION autocommit = 0']];
+    }
+
+    /** @param array<int, mixed> $options */
+    #[DataProvider('autocommitOffOptions')]
+    public function testAFactoryConnectionWithoutAutocommitIsRejectedBeforeAnyClaim(array $options): void
+    {
+        $job = $this->enqueue('key-1');
+        $worker = $this->worker(function () use ($options): PDO {
+            $pdo = $this->rawConnection($options);
+            $this->connections[] = $pdo;
+            return $pdo;
+        });
+
+        $error = $this->errorOf(static fn () => $worker->processBatch());
+
+        self::assertNotNull($error);
+        self::assertStringStartsWith(\UnexpectedValueException::class . ':', $error);
+        self::assertStringContainsString('autocommit', $error);
+        self::assertSame(['pending', '0'], [$this->row($job)['status'], $this->row($job)['attempts']]);
+        self::assertSame(0, $this->transport->calls);
+    }
+
+    public function testAPlainConnectionWithoutAutocommitIsRejectedBeforeAnyClaim(): void
+    {
+        $job = $this->enqueue('key-1');
+        $connection = $this->rawConnection([]);
+        $connection->exec('SET SESSION autocommit = 0');
+
+        $error = $this->errorOf(fn () => $this->worker($connection)->processBatch());
+
+        self::assertNotNull($error);
+        self::assertStringStartsWith(\UnexpectedValueException::class . ':', $error);
+        self::assertSame(['pending', '0'], [$this->row($job)['status'], $this->row($job)['attempts']]);
+        self::assertSame(0, $this->transport->calls);
+        self::assertFalse($connection->inTransaction());
+    }
+
+    public function testAReconnectThatReturnsAConnectionWithoutAutocommitStopsTheBatchWithoutUsingIt(): void
+    {
+        $first = $this->enqueue('key-1');
+        $second = $this->enqueue('key-2');
+        $healthy = $this->factory();
+        $worker = $this->worker(function () use ($healthy): PDO {
+            if ($this->connections === []) {
+                return $healthy();
+            }
+            $pdo = $this->rawConnection([PDO::ATTR_AUTOCOMMIT => false]);
+            $this->connections[] = $pdo;
+            return $pdo;
+        });
+        $this->transport->duringSend = fn (int $call) => $this->closeWorkerConnection();
+
+        $error = $this->errorOf(static fn () => $worker->processBatch());
+
+        self::assertNotNull($error);
+        self::assertStringContainsString('autocommit', $error);
+        self::assertSame(1, $this->transport->calls);
+        self::assertSame(['processing', 'processing'], [$this->row($first)['status'], $this->row($second)['status']]);
+    }
+
+    // ── claim plan and locks (review point 2) ─────────────────────
+
+    public function testTheClaimUsesTheClaimIndexAndLeavesFinishedRowsWritable(): void
+    {
+        $this->seedFinishedRows();
+        $due = $this->enqueue('key-1');
+        $finished = (int) self::scalar($this->pdo, "SELECT MAX(id) FROM cd_email_queue WHERE status = 'sent'");
+        $analyze = $this->pdo->query('ANALYZE TABLE cd_email_queue');
+        self::assertNotFalse($analyze);
+        $analyze->fetchAll();
+        $connection = new EmailQueueFaultPdo();
+        $workerThread = (int) self::scalar($connection, 'SELECT CONNECTION_ID()');
+        $observed = [];
+        $connection->afterExecuteHook = function (string $sql) use (&$observed, $workerThread, $finished): void {
+            if ($observed !== [] || !str_contains($sql, 'FOR UPDATE')) {
+                return;
+            }
+            // Inside the claim transaction, right after its locking read.
+            $other = self::connection();
+            $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
+            $observed['sql'] = $sql;
+            $observed['rows_locked'] = (int) self::scalar($other, "SELECT trx_rows_locked FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = $workerThread");
+            $other->beginTransaction();
+            $start = microtime(true);
+            try {
+                $other->exec("UPDATE cd_email_queue SET updated_at = updated_at WHERE id = $finished");
+                $observed['finished_row_write'] = 'no wait';
+            } catch (PDOException $failure) {
+                $observed['finished_row_write'] = 'waited: ' . ($failure->errorInfo[1] ?? '?');
+            } finally {
+                $other->rollBack();
+            }
+            $observed['finished_row_write_ms'] = (microtime(true) - $start) * 1000;
+        };
+
+        $this->worker($connection)->processBatch();
+
+        self::assertSame('sent', $this->row($due)['status']);
+        self::assertSame('no wait', $observed['finished_row_write'] ?? null, 'A finished row stays writable while the claim runs.');
+        self::assertLessThan(50, $observed['rows_locked'] ?? PHP_INT_MAX, 'The claim locks the active rows, not the table.');
+        $plan = $this->pdo->prepare('EXPLAIN ' . str_replace('FOR UPDATE', '', (string) ($observed['sql'] ?? '')));
+        $plan->bindValue(':lease', EmailQueueWorker::DEFAULT_PROCESSING_LEASE_SECONDS, PDO::PARAM_INT);
+        $plan->bindValue(':limit', 50, PDO::PARAM_INT);
+        $plan->execute();
+        /** @var array{type: string, key: string|null} $row */
+        $row = $plan->fetch(PDO::FETCH_ASSOC);
+        self::assertSame(['range', 'idx_email_queue_claim'], [$row['type'], $row['key']]);
+    }
+
+    // ── lost acknowledgement after a 2013 (review point 3) ────────
+
+    public function testASentWriteWhoseAcknowledgementIsLostKeepsTheFirstSentTime(): void
+    {
+        $job = $this->enqueue('key-1');
+        $faults = 0;
+        $worker = $this->worker($this->lostAcknowledgementFactory("SET status = 'sent'", $faults));
+
+        $error = $this->errorOf(static fn () => $worker->processBatch());
+
+        self::assertNull($error);
+        self::assertSame(1, $faults, 'The sent write ran on the server before its acknowledgement was lost.');
+        self::assertCount(2, $this->connections);
+        self::assertSame(1, $this->transport->calls);
+        self::assertSame('sent', $this->row($job)['status']);
+        self::assertSame('2030-01-01 12:00:00', $this->scalarOrNull("SELECT sent_at FROM cd_email_queue WHERE id = $job"), 'The repeat must not move sent_at.');
+        self::assertSame([], $this->logger->contexts('error', self::SENT_UNRECORDED));
+    }
+
+    public function testARetryWriteWhoseAcknowledgementIsLostCountsAsRecordedAndKeepsTheFirstRetryTime(): void
+    {
+        $job = $this->enqueue('key-1');
+        $faults = 0;
+        $worker = $this->worker($this->lostAcknowledgementFactory("status      = 'pending'", $faults));
+        $this->transport->fail = true;
+
+        $error = $this->errorOf(static fn () => $worker->processBatch());
+
+        self::assertNull($error);
+        self::assertSame(1, $faults);
+        self::assertSame(['pending', '1'], [$this->row($job)['status'], $this->row($job)['attempts']]);
+        self::assertSame('2030-01-01 12:00:30', $this->scalarOrNull("SELECT retry_after FROM cd_email_queue WHERE id = $job"));
+        $scheduled = $this->logger->contexts('info', 'Email job scheduled for retry');
+        self::assertCount(1, $scheduled);
+        self::assertSame('2030-01-01 12:00:30', $scheduled[0]['retry_after'], 'The log reports the stored retry time.');
+        self::assertSame([], $this->logger->contexts('warning', 'Email job outcome not recorded: ' . self::NOT_OWNED));
+    }
+
+    public function testAFinalFailureWriteWhoseAcknowledgementIsLostCountsAsRecorded(): void
+    {
+        $job = $this->enqueue('key-1');
+        $this->pdo->exec("UPDATE cd_email_queue SET attempts = 3 WHERE id = $job");
+        $faults = 0;
+        $worker = $this->worker($this->lostAcknowledgementFactory("SET status = 'failed', last_error = :error", $faults));
+        $this->transport->fail = true;
+
+        $error = $this->errorOf(static fn () => $worker->processBatch());
+
+        self::assertNull($error);
+        self::assertSame(1, $faults);
+        self::assertSame(['failed', '4'], [$this->row($job)['status'], $this->row($job)['attempts']]);
+        self::assertCount(1, $this->logger->contexts('warning', 'Email job permanently failed'));
+        self::assertSame([], $this->logger->contexts('warning', 'Email job outcome not recorded: ' . self::NOT_OWNED));
+    }
+
+    public function testALeaseRenewalWhoseAcknowledgementIsLostOnlyMovesTheLeaseForwardAndSendsOnce(): void
+    {
+        $job = $this->enqueue('key-1');
+        $faults = 0;
+        $worker = $this->worker($this->lostAcknowledgementFactory('SET updated_at = ', $faults));
+
+        $error = $this->errorOf(static fn () => $worker->processBatch());
+
+        self::assertNull($error);
+        self::assertSame(1, $faults);
+        self::assertSame(1, $this->transport->calls);
+        self::assertSame('sent', $this->row($job)['status']);
+        self::assertSame('2030-01-01 12:01:40', $this->scalarOrNull("SELECT updated_at FROM cd_email_queue WHERE id = $job"), 'The repeated renewal moved the lease forward.');
+    }
+
     // ── fixture helpers ───────────────────────────────────────────
 
     /** A real connection whose first `sent` write fails with the given driver code. */
@@ -592,6 +810,59 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         return $row;
     }
 
+    /** @param array<int, mixed> $options */
+    private function rawConnection(array $options): PDO
+    {
+        $dsn = getenv('EMAIL_DELIVERY_IT_DSN');
+        self::assertIsString($dsn);
+        $pdo = new PDO($dsn, (string) getenv('EMAIL_DELIVERY_IT_USER'), (string) getenv('EMAIL_DELIVERY_IT_PASS'), $options + [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES => false,
+        ]);
+        $this->openedThreads[] = (int) self::scalar($pdo, 'SELECT CONNECTION_ID()');
+        return $pdo;
+    }
+
+    /**
+     * Connections whose clocks are frozen 100 seconds apart (12:00:00, 12:01:40, ...). On the first one, the
+     * first statement containing $needle really runs on the server; then its acknowledgement is lost (2013).
+     *
+     * @return Closure(): PDO
+     */
+    private function lostAcknowledgementFactory(string $needle, int &$faults): Closure
+    {
+        $epoch = (new DateTimeImmutable(self::NOW))->getTimestamp();
+        return function () use ($needle, &$faults, $epoch): PDO {
+            $pdo = new EmailQueueFaultPdo();
+            $this->openedThreads[] = (int) self::scalar($pdo, 'SELECT CONNECTION_ID()');
+            $pdo->exec('SET timestamp=' . ($epoch + 100 * count($this->connections)));
+            $pdo->afterExecuteHook = static function (string $sql) use ($needle, &$faults): void {
+                if (str_contains($sql, $needle) && $faults === 0) {
+                    ++$faults;
+                    $lost = new PDOException('Fixture: the statement ran, then its acknowledgement was lost');
+                    $lost->errorInfo = ['HY000', 2013, 'Lost connection to MySQL server during query'];
+                    throw $lost;
+                }
+            };
+            $this->connections[] = $pdo;
+            return $pdo;
+        };
+    }
+
+    /** 9,000 sent and 1,000 failed rows, as in a long-running queue. */
+    private function seedFinishedRows(): void
+    {
+        $digits = '(SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4'
+            . ' UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9)';
+        $this->pdo->exec("
+            INSERT INTO cd_email_queue (recipient_encrypted, recipient_iv, recipient_tag, recipient_key_id, payload_encrypted,
+                payload_iv, payload_tag, payload_key_id, template_key, language, sender_type, priority, status, attempts,
+                last_error, sent_at, scheduled_at, created_at, updated_at)
+            SELECT 'x', 'iv', 'tag', 'k', 'x', 'iv', 'tag', 'k', 'welcome', 'en', 1, 1 + (n % 9),
+                IF(n % 10 = 0, 'failed', 'sent'), 1, '', UTC_TIMESTAMP(), UTC_TIMESTAMP(), UTC_TIMESTAMP(), UTC_TIMESTAMP()
+            FROM (SELECT a.d + 10 * b.d + 100 * c.d + 1000 * e.d AS n FROM $digits a, $digits b, $digits c, $digits e) seq
+        ");
+    }
+
     /** @return Closure(): PDO */
     private function factory(?int $idleTimeoutSeconds = null): Closure
     {
@@ -603,6 +874,7 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
             $id = (int) self::scalar($pdo, 'SELECT CONNECTION_ID()');
             $this->connections[] = $pdo;
             $this->connectionIds[] = $id;
+            $this->openedThreads[] = $id;
             if (count($this->connections) > $this->closedFrom) {
                 $this->closeConnection($id);
             }

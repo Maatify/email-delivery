@@ -14,11 +14,20 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 use Tests\Helpers\SqliteTestPdo;
 use Tests\Support\EmailQueueTestFactory as Factory;
+use Tests\Support\WorkerRecordingLogger;
 use Tests\Support\WorkerRecordingTransport;
 use UnexpectedValueException;
 
 final class EmailQueueWorkerConnectionContractTest extends TestCase
 {
+    private const DRIVER_WARNING = 'Database driver warning during an email queue statement';
+    private static WorkerRecordingLogger $driverLog;
+
+    protected function setUp(): void
+    {
+        self::$driverLog = new WorkerRecordingLogger();
+    }
+
     /** @return iterable<string, array{int}> */
     public static function invalidLeases(): iterable
     {
@@ -110,41 +119,48 @@ final class EmailQueueWorkerConnectionContractTest extends TestCase
         });
 
         self::assertSame([], $outer, 'The application handler never sees the disconnect symptom.');
+        self::assertSame([], self::$driverLog->contexts('warning', self::DRIVER_WARNING), 'A confirmed loss is logged by the worker itself.');
     }
 
-    public function testADriverDisconnectWarningWithoutALostConnectionIsRaisedAgain(): void
+    public function testADriverDisconnectWarningOnASuccessfulStatementIsLoggedAndTheResultReturned(): void
     {
-        $outer = $this->outerWarnings(static function (): void {
-            self::assertSame('done', self::onPossiblyClosedConnection(static function (): string {
+        $result = self::underThrowingHandler(static fn (): mixed => self::onPossiblyClosedConnection(static function (): string {
+            self::raiseWarning('Packets out of order');
+            return 'done';
+        }));
+
+        self::assertSame('done', $result, 'An application handler that throws on warnings never sees the held warning.');
+        $logged = self::$driverLog->contexts('warning', self::DRIVER_WARNING);
+        self::assertCount(1, $logged);
+        self::assertIsString($logged[0]['warning']);
+        self::assertStringContainsString('Packets out of order', $logged[0]['warning']);
+    }
+
+    /** @return iterable<string, array{\Throwable}> */
+    public static function nonConnectionFailures(): iterable
+    {
+        $lockWait = new PDOException('Fixture lock wait');
+        $lockWait->errorInfo = ['HY000', 1205, 'Fixture'];
+        yield 'database error that is not a lost connection' => [$lockWait];
+        yield 'any other error' => [new \RuntimeException('Fixture failure')];
+    }
+
+    #[DataProvider('nonConnectionFailures')]
+    public function testADriverDisconnectWarningBeforeAnotherErrorKeepsTheOriginalException(\Throwable $original): void
+    {
+        try {
+            self::underThrowingHandler(static fn (): mixed => self::onPossiblyClosedConnection(static function () use ($original): never {
                 self::raiseWarning('Packets out of order');
-                return 'done';
+                throw $original;
             }));
-        });
-
-        self::assertCount(1, $outer);
-        self::assertSame(E_USER_WARNING, $outer[0][0]);
-        self::assertStringContainsString('Packets out of order', $outer[0][1]);
-    }
-
-    public function testADriverDisconnectWarningBeforeAnotherDatabaseErrorIsRaisedAgain(): void
-    {
-        $outer = $this->outerWarnings(function (): void {
-            try {
-                self::onPossiblyClosedConnection(static function (): never {
-                    self::raiseWarning('Packets out of order');
-                    $other = new PDOException('Fixture lock wait');
-                    $other->errorInfo = ['HY000', 1205, 'Fixture'];
-                    throw $other;
-                });
-                self::fail('The database error must propagate.');
-            } catch (PDOException $failure) {
-                self::assertSame('Fixture lock wait', $failure->getMessage());
-            }
-        });
-
-        self::assertCount(1, $outer);
-        self::assertSame(E_USER_WARNING, $outer[0][0]);
-        self::assertStringContainsString('Packets out of order', $outer[0][1]);
+            self::fail('The original error must propagate.');
+        } catch (\Throwable $caught) {
+            self::assertSame($original, $caught, 'The caller receives the original exception, not an ErrorException.');
+        }
+        $logged = self::$driverLog->contexts('warning', self::DRIVER_WARNING);
+        self::assertCount(1, $logged);
+        self::assertIsString($logged[0]['warning']);
+        self::assertStringContainsString('Packets out of order', $logged[0]['warning']);
     }
 
     public function testAnUnrelatedWarningReachesTheApplicationHandlerUnchanged(): void
@@ -214,7 +230,32 @@ final class EmailQueueWorkerConnectionContractTest extends TestCase
     /** @param \Closure(): mixed $operation */
     private static function onPossiblyClosedConnection(\Closure $operation): mixed
     {
-        return (new \ReflectionMethod(EmailQueueWorker::class, 'onPossiblyClosedConnection'))->invoke(null, $operation);
+        $worker = new EmailQueueWorker(
+            new PDO('sqlite::memory:'),
+            Factory::crypto(),
+            new TwigEmailRenderer(dirname(__DIR__) . '/Fixtures/templates', [], false),
+            new WorkerRecordingTransport(),
+            new Factory(),
+            self::$driverLog,
+        );
+        return (new \ReflectionMethod(EmailQueueWorker::class, 'onPossiblyClosedConnection'))->invoke($worker, $operation);
+    }
+
+    /**
+     * Runs $scenario under an application handler that turns every warning into an exception.
+     *
+     * @param \Closure(): mixed $scenario
+     */
+    private static function underThrowingHandler(\Closure $scenario): mixed
+    {
+        set_error_handler(static function (int $level, string $message, string $file, int $line): never {
+            throw new \ErrorException($message, 0, $level, $file, $line);
+        });
+        try {
+            return $scenario();
+        } finally {
+            restore_error_handler();
+        }
     }
 
     /** A real engine E_WARNING whose text contains $marker. */

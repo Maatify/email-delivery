@@ -1,4 +1,4 @@
--- Fresh install: apply 001 then 002. Existing deployments apply 002 and 003 instead.
+-- Fresh install: apply 001, 002, then 005. Existing deployments apply 002 and 003 instead, then 005.
 -- Raw AES-GCM bytes require binary columns. Keyed timestamps use UTC; legacy timing retains its prior contract.
 CREATE TABLE IF NOT EXISTS cd_email_queue (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
