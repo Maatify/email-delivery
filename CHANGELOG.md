@@ -39,15 +39,17 @@ Published dates below use the corresponding GitHub Release publication date in U
 - Before PHP 8.4, the driver's disconnect warning (`Packets out of order`) no longer reaches the
   application during these statements, so a handler that turns warnings into exceptions no longer
   hides the lost connection and blocks the reconnect. A held warning that does not accompany a lost
-  connection is logged (`Database driver warning during an email queue statement`) and never raised
-  again, so the original exception or result reaches the caller unchanged.
+  connection is never raised again, so the original exception or result reaches the caller unchanged; it
+  is logged (`Database driver warning during an email queue statement`) on a best-effort basis.
 - On a `TIMESTAMP` `updated_at` (some application schemas), the lease is stamped and compared with
   `NOW()` for every row. A fresh keyed row is no longer reclaimed by a worker in another session zone,
   and rows stamped by `ON UPDATE CURRENT_TIMESTAMP` are judged correctly. A `DATETIME` column keeps each
   row's own clock.
 - A status write repeated after its acknowledgement was lost (2013) has a defined effect. `sent_at`
-  keeps the first recorded send time. A retry/failed write that already applied counts as recorded and
-  keeps its first `retry_after`; it is no longer reported as "no longer processing".
+  keeps the first recorded send time. On the repeat after a reconnect, a retry/failed write that already
+  applied counts as recorded and keeps its first `retry_after`. It must match this attempt's status,
+  attempt number and error message, so a row another batch settled at the cap is still reported as not
+  recorded by this attempt.
 
 ### Compatibility and limits
 - Semantic versioning: additive and backward compatible within 1.x (a minor release). The first
@@ -55,8 +57,11 @@ Published dates below use the corresponding GitHub Release publication date in U
   and a public constant are added. The class stays `final` and is no longer declared `readonly`.
 - Delivery is at-least-once: a message may be sent twice when its `sent` status cannot be recorded
   even after one reconnect, or when one render and send outlasts the lease.
-- One additive index (`005`), applied online. The worker works without it, but each of its two claim
-  reads then scans and locks the whole table. Rows left `processing` by an earlier version become claimable on the first
+- One additive index (`005`). Fresh installs run 001, 002, then 005; legacy tables run 002, 003, then 005;
+  1.2.0 installs that already applied 002 and 003 run only 005. It is built with `ALGORITHM=INPLACE,
+  LOCK=NONE`: reads and writes continue, but it still takes brief metadata locks and waits for open
+  transactions, so run it off-peak. The worker works without it, but each of its two claim reads then
+  scans and locks the whole table. Rows left `processing` by an earlier version become claimable on the first
   upgraded batch and may be sent again; review them first, and do not run older and newer workers on
   the same table. Each row now costs two more statements (lease renewal and ownership read).
 - `PDO` instance users whose connection has autocommit off now get `UnexpectedValueException` before
@@ -72,7 +77,7 @@ Published dates below use the corresponding GitHub Release publication date in U
 ### Added
 - Complete consumer reference, canonical usage guide/root examples, contribution/conduct files and llms.txt.
 - Separate archive verification and post-publication verification tooling; publication remains owner-controlled.
-- Optional encrypted no-send recording (#8), distinct synthetic DTO/ports, independent optional schema004,
+- Optional encrypted no-send recording (#8), distinct synthetic DTO/ports, independent optional schema 004,
   explicit consumer retention and bounded expired-record cleanup. No real jobs/receipts or timing guarantee.
 - Optional explicit namespace/key atomic enqueue, content conflict detection, encrypted logical digest
   and scoped durable receipt lookup (#4). Legacy void enqueue remains one insert per call.

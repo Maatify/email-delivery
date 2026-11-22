@@ -125,17 +125,24 @@ effect:
   only a read.
 - **`sent` write:** the repeat changes nothing. `sent_at` keeps the first recorded send time, including
   when a lease expiry led to a second real send.
-- **Retry/failed write:** the fenced repeat matches no row. The worker then reads the row back. If the
-  row already holds this attempt's outcome (the same status and attempt number), the write counts as
-  recorded and is logged normally, and the first `retry_after` is kept and reported.
+- **Retry/failed write:** the fenced repeat matches no row. Only on this repeat after a reconnect does the
+  worker read the row back.
+  - **Recorded:** the row counts as this attempt's outcome only when it holds the same status, attempt
+    number and error message. The write is then logged normally, and the first `retry_after` is kept and
+    reported.
+  - **Not recorded:** a row another batch settled or rescheduled, such as `processing_lease_expired` at
+    the attempt cap, which keeps the attempt number. It is reported as not recorded by this attempt and
+    left unchanged.
+  - **First try:** a fenced write that matches no row is reported that way without a read.
 - **Keyed retry-clock read:** only a read.
 
 Before PHP 8.4, the MySQL driver also raises a PHP warning such as `Packets out of order` when it reads
 the server's disconnect. While these statements run, the worker holds such warnings back, so an
 application handler that turns warnings into exceptions cannot hide the lost connection. A held warning
-is dropped when the connection loss is confirmed; the worker logs that loss itself. Otherwise it is
-logged as `Database driver warning during an email queue statement`, and never raised again. The
-original exception or result passes through unchanged. Every other error, at any level, reaches your
+is dropped when the connection loss is confirmed; the worker logs that loss itself. Otherwise it is never
+raised again, and the original exception or result passes through unchanged. It is written to the
+logger as `Database driver warning during an email queue statement` on a best-effort basis: a logger
+that throws there is ignored, so it cannot replace the original exception or result. Every other error, at any level, reaches your
 error handler unchanged, and PHP's own handler runs only when yours returns `false`.
 
 ## Failure and recovery limits

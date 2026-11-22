@@ -41,17 +41,26 @@ which scheduled a second send of a message that had already been sent.
      is only a read.
    - **`sent` write:** the repeat changes nothing. `sent_at = COALESCE(sent_at, clock)` keeps the first
      recorded send time, including after a second real send that followed a lease expiry.
-   - **Retry/failed write:** the fenced repeat matches no row. The worker then reads the row back. If the
-     row already holds this attempt's outcome (the same status and attempt number), the write counts as
-     recorded and is logged normally, and the first `retry_after` is kept and reported. Otherwise the
-     outcome is logged as not recorded by this attempt.
+   - **Retry/failed write:** the fenced repeat matches no row. Only on this repeat after a reconnect does
+     the worker read the row back, because only there can a first execution have applied with its
+     acknowledgement lost.
+     - **Recorded:** the row counts as this attempt's outcome only when it holds the same status, attempt
+       number and error message. The write is then logged normally, and the first `retry_after` is kept
+       and reported.
+     - **Why status and attempt number are not proof:** another batch can settle the row `failed` with
+       `processing_lease_expired` at the attempt cap without changing the attempt number. Such a row
+       carries its own error message, so it is reported as not recorded by this attempt and left
+       unchanged.
+     - **First try:** a fenced write that matches no row is always reported that way, without a read.
    - **Keyed retry-clock read:** only a read.
    Before PHP 8.4, mysqlnd also raises a `Packets out of order` warning when it reads that disconnect.
    While these statements run, such warnings are held back so an application handler that converts
    warnings into exceptions cannot mask the `PDOException`. They are dropped once the loss is confirmed,
-   because the worker logs that loss itself. Otherwise they are logged through the worker's logger and
-   never raised again, so the original exception or result reaches the caller unchanged. Every other
-   error, at any level, goes to the application's handler unchanged.
+   because the worker logs that loss itself. Otherwise they are never raised again, so the original
+   exception or result reaches the caller unchanged. Each is written to the worker's logger on a
+   best-effort basis: if the logger itself throws, that failure is swallowed so that it cannot replace
+   the original exception or result. Every other error, at any level, goes to the application's handler
+   unchanged.
 3. **Never around a transaction.** The claim is never retried. Before `beginTransaction()` the worker
    checks its connection with `SELECT 1` and replaces it if the server closed it; nothing has run yet.
 4. **A send is never followed by a retry write.** After a successful send, a failed `sent` write never
@@ -108,9 +117,13 @@ which scheduled a second send of a message that had already been sent.
 - Delivery is at-least-once. A message can be sent twice when its send succeeds and its `sent` status
   cannot be recorded even after one reconnect, or when one render and send outlasts the lease. Size the
   lease as item 7 describes.
-- One additive schema file, `005_email_queue_claim_index.sql`. It adds the claim index online
-  (`ALGORITHM=INPLACE, LOCK=NONE`) and applies to every installation that has no index led by
-  `(status, priority, id)`. Without such an index each of the two claim reads scans and locks the whole
+- One additive schema file, `005_email_queue_claim_index.sql`, for every installation that has no index
+  led by `(status, priority, id)`. Fresh installs run 001, 002, then 005; legacy tables run 002, 003, then
+  005; 1.2.0 installs that already applied 002 and 003 run only 005.
+  - **Online, with limits:** it uses `ALGORITHM=INPLACE, LOCK=NONE`, so reads and writes continue while
+    the index builds. It still takes a brief exclusive metadata lock at the start and end, waits for open
+    transactions on the table, and briefly blocks sessions queued behind it. Run it off-peak; see the
+    upgrade guide. Without such an index each of the two claim reads scans and locks the whole
   table, which is twice 1.2.0's single scan.
   - **Measured** on a 100,000-row table (90% `sent`, 8% `failed`, 1.5% `pending`, 0.5% `processing`),
     MySQL 8.0.46 and MariaDB 11.4 under REPEATABLE READ, 50-row batch.
@@ -165,6 +178,8 @@ The repository test `EmailQueueWorkerReconnectMysqlTest` runs against real MySQL
 - a `sent` write failing on a live connection at the first and the last attempt;
 - a statement that ran but whose acknowledgement was lost (2013), for the `sent`, retry, failed and
   renewal writes;
+- a last attempt whose send fails after another worker settled its row at the cap, on the first try and
+  on the repeat after a reconnect, plus a first-try write that never reads the row back;
 - connections without autocommit, from a factory (attribute or init command), on reconnect, or as a
   plain `PDO`;
 - the claim reading each status in index order, locking about a batch while finished rows stay writable;

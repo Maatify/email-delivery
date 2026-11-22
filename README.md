@@ -86,7 +86,8 @@ Monolog is not a package dependency.
 
 Apply the [schema installation/upgrade](docs/upgrade.md) before adopting the keyed API. Do not run
 all numbered SQL files on a fresh installation: the binding upgrade is for an existing legacy table.
-The worker's claim index (`005`, Unreleased) applies to every installation, fresh or existing.
+The worker's claim index (`005`, Unreleased): fresh installs run 001, 002, then 005; legacy tables run
+002, 003, then 005; 1.2.0 installs that already applied 002 and 003 run only 005.
 
 Synthetic recording uses an optional independent table and separate crypto domains. Its retention is
 explicitly configured by the consumer; cleanup is scheduled externally. It provides no constant-time or
