@@ -78,9 +78,6 @@ final class EmailQueueWorker
     /** Replaced only outside a transaction, after the server closed it. */
     private ?PDO $connection;
 
-    /** The PDO instance whose autocommit setting was already confirmed (factory connections are checked when created). */
-    private ?PDO $autocommitConfirmed = null;
-
     private readonly int $processingLeaseSeconds;
 
     /**
@@ -612,16 +609,15 @@ final class EmailQueueWorker
             return $this->reconnect();
         }
         if ($this->connectionFactory === null) {
-            // Under ERRMODE_SILENT or ERRMODE_WARNING a failed statement only returns false, so a status write
-            // or a lease renewal could fail unnoticed after a send. The application owns this PDO and can change
-            // its error mode between batches, so the attribute is read before every claim (no query).
+            // The application owns this PDO and can change its settings between batches, so both are checked
+            // before every claim. Under ERRMODE_SILENT or ERRMODE_WARNING a failed statement only returns false,
+            // so a status write or a lease renewal could fail unnoticed after a send (an attribute read, no
+            // query). With autocommit turned off, the status writes after the claim's commit would stay
+            // uncommitted and be lost with the connection (one read of @@SESSION.autocommit on MySQL/MariaDB).
             if ($this->connection->getAttribute(PDO::ATTR_ERRMODE) !== PDO::ERRMODE_EXCEPTION) {
                 throw new UnexpectedValueException('The email queue worker requires a PDO in exception error mode (PDO::ERRMODE_EXCEPTION).');
             }
-            if ($this->autocommitConfirmed !== $this->connection) {
-                self::requireAutocommit($this->connection);
-                $this->autocommitConfirmed = $this->connection;
-            }
+            self::requireAutocommit($this->connection);
             return $this->connection;
         }
 

@@ -749,6 +749,50 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertFalse($connection->inTransaction());
     }
 
+    /** @return iterable<string, array{string}> */
+    public static function autocommitTurnedOffBetweenBatches(): iterable
+    {
+        yield 'SET SESSION autocommit = 0' => ['statement'];
+        yield 'PDO::ATTR_AUTOCOMMIT = false' => ['attribute'];
+    }
+
+    /**
+     * The application owns a plain PDO and may turn autocommit off after a batch that passed the check. The
+     * next batch must refuse it before claiming: its status writes would otherwise stay uncommitted.
+     */
+    #[DataProvider('autocommitTurnedOffBetweenBatches')]
+    public function testAPlainConnectionWhoseAutocommitIsTurnedOffBetweenBatchesIsRefusedBeforeTheNextClaim(string $how): void
+    {
+        $plain = $this->rawConnection([]);
+        $worker = $this->worker($plain);
+        $worker->processBatch();
+        if ($how === 'statement') {
+            $plain->exec('SET SESSION autocommit = 0');
+        } else {
+            $plain->setAttribute(PDO::ATTR_AUTOCOMMIT, false);
+        }
+        // Enqueued through the fixture connection, independent of the worker's.
+        $job = $this->enqueue('key-1');
+
+        try {
+            $error = $this->errorOf(static fn () => $worker->processBatch());
+            // Read through the fixture connection before autocommit is restored: turning it back on would
+            // commit whatever the worker left uncommitted.
+            $row = [$this->row($job)['status'], $this->row($job)['attempts']];
+        } finally {
+            if ($how === 'statement') {
+                $plain->exec('SET SESSION autocommit = 1');
+            } else {
+                $plain->setAttribute(PDO::ATTR_AUTOCOMMIT, true);
+            }
+        }
+
+        self::assertSame(0, $this->transport->calls, 'Nothing is sent.');
+        self::assertSame([], $this->logger->contexts('info', 'Email sent'));
+        self::assertSame(['pending', '0'], $row, 'Nothing is claimed (read through another connection).');
+        self::assertStringContainsString('UnexpectedValueException: The email queue worker requires a connection with autocommit enabled', (string) $error);
+    }
+
     public function testAReconnectThatReturnsAConnectionWithoutAutocommitStopsTheBatchWithoutUsingIt(): void
     {
         $first = $this->enqueue('key-1');
