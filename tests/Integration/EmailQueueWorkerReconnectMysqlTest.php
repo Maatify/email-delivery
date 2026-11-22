@@ -1139,6 +1139,170 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame(['processing', '1'], [$this->row($job)['status'], $this->row($job)['attempts']]);
     }
 
+    public function testADueCandidateRescheduledBeforeItIsLockedIsNotClaimed(): void
+    {
+        $job = $this->enqueue('key-1');
+        $connection = new EmailQueueFaultPdo();
+        $rescheduled = false;
+        $connection->afterExecuteHook = function (string $sql) use ($job, &$rescheduled): void {
+            if (str_starts_with(ltrim($sql), 'SELECT id FROM') && str_contains($sql, "status = 'pending'") && !$rescheduled) {
+                // Between the unlocked candidate read and the lock, the application moves the message to tomorrow.
+                $rescheduled = true;
+                $this->pdo->exec("UPDATE cd_email_queue SET scheduled_at = UTC_TIMESTAMP() + INTERVAL 1 DAY WHERE id = $job");
+            }
+        };
+
+        $this->worker($connection)->processBatch();
+
+        self::assertTrue($rescheduled);
+        self::assertSame(0, $this->transport->calls, 'The due predicate is re-checked on the latest version before the row is taken.');
+        self::assertSame(['pending', '0'], [$this->row($job)['status'], $this->row($job)['attempts']]);
+    }
+
+    // ── owner review R1: rows that are not due yet are never locked ──
+
+    /** @return iterable<string, array{string, int}> */
+    public static function notDueRowsAheadOfADueOne(): iterable
+    {
+        foreach (['scheduled_at' => 'scheduled in the future', 'retry_after' => 'retrying in the future'] as $column => $name) {
+            foreach ([1, 50] as $limit) {
+                yield "$name, batch limit $limit" => [$column, $limit];
+            }
+        }
+    }
+
+    /**
+     * 1,000 priority-1 rows that are not due yet sit ahead of one due priority-9 row in (priority, id) order. A
+     * locking scan would lock every one of them, and the gaps between them, until the claim commits.
+     */
+    #[DataProvider('notDueRowsAheadOfADueOne')]
+    public function testAClaimLocksNoPendingRowThatIsNotDueYet(string $notDue, int $limit): void
+    {
+        $notDueIds = $this->seedNotDuePendingRows(1000, $notDue);
+        $due = $this->enqueue('key-due');
+        $this->pdo->exec("UPDATE cd_email_queue SET priority = 9 WHERE id = $due");
+        $connection = new EmailQueueFaultPdo();
+        $workerThread = (int) self::scalar($connection, 'SELECT CONNECTION_ID()');
+        $mysql = self::isMysql($connection);
+        $observed = ['locking_reads' => 0, 'waited' => [], 'rows_locked' => null, 'record_locks' => null];
+        $connection->afterExecuteHook = function (string $sql) use (&$observed, $workerThread, $mysql, $notDueIds): void {
+            if (!str_contains($sql, 'FOR UPDATE')) {
+                return;
+            }
+            // Inside the claim transaction, right after its locking read.
+            ++$observed['locking_reads'];
+            $other = self::connection();
+            $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
+            usleep(150_000); // information_schema.INNODB_TRX is refreshed at most every 0.1 s
+            $observed['rows_locked'] = (int) self::scalar($other, "SELECT trx_rows_locked FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = $workerThread");
+            if ($mysql) {
+                $observed['record_locks'] = self::recordLocks($other, $workerThread);
+            }
+            $probes = [
+                'reschedule a row that is not due' => "UPDATE cd_email_queue SET scheduled_at = scheduled_at + INTERVAL 1 MINUTE WHERE id = {$notDueIds[499]}",
+                'write the first row that is not due' => "UPDATE cd_email_queue SET last_error = 'probe' WHERE id = {$notDueIds[0]}",
+                'enqueue at priority 1' => self::enqueueStatement(1),
+                'enqueue at priority 5' => self::enqueueStatement(5),
+                'enqueue at priority 9' => self::enqueueStatement(9),
+            ];
+            foreach ($probes as $what => $probe) {
+                $other->beginTransaction();
+                try {
+                    $other->exec($probe);
+                } catch (PDOException $failure) {
+                    $observed['waited'][] = $what . ': ' . ($failure->errorInfo[1] ?? '?');
+                } finally {
+                    $other->rollBack();
+                }
+            }
+        };
+
+        $this->worker($connection)->processBatch($limit);
+
+        self::assertSame(1, $observed['locking_reads']);
+        self::assertSame([], $observed['waited'], 'Writes to rows that are not due, and enqueues at any priority, never wait for the claim.');
+        self::assertSame(1, $observed['rows_locked'], 'The claim locks only its one candidate (INNODB_TRX).');
+        if ($mysql) {
+            self::assertSame([['PRIMARY', 'X,REC_NOT_GAP', (string) $due]], $observed['record_locks'], 'One primary-key record lock, on the due row: no index entry, no gap (MySQL data_locks).');
+        }
+        self::assertSame('sent', $this->row($due)['status']);
+        self::assertSame(1000, (int) self::scalar($this->pdo, "SELECT COUNT(*) FROM cd_email_queue WHERE status = 'pending' AND attempts = 0 AND priority = 1"));
+    }
+
+    // ── owner review R2: expired, fresh and pending rows together ──
+
+    public function testAClaimOfExpiredLeasesAmongFreshOnesLocksOnlyItsCandidatesByPrimaryKey(): void
+    {
+        $expired = [];
+        for ($i = 0; $i < 3; ++$i) {
+            $expired[] = $this->stale($this->enqueue('expired-' . $i), 1, gmdate('Y-m-d H:i:s', time() - 3600));
+        }
+        $fresh = $this->seedInFlightRows(40);
+        // Fresh rows before, between and after the expired ones in the (status, priority, id) index.
+        $this->pdo->exec('UPDATE cd_email_queue SET priority = 1 WHERE id IN (' . implode(',', array_slice($fresh, 0, 15)) . ')');
+        $this->pdo->exec('UPDATE cd_email_queue SET priority = 5 WHERE id IN (' . implode(',', [...array_slice($fresh, 15, 15), ...$expired]) . ')');
+        $pending = [$this->enqueue('due-1'), $this->enqueue('due-2')];
+        $candidates = [...$expired, ...$pending];
+        sort($candidates);
+        $connection = new EmailQueueFaultPdo();
+        $workerThread = (int) self::scalar($connection, 'SELECT CONNECTION_ID()');
+        $mysql = self::isMysql($connection);
+        $observed = ['locking_reads' => 0, 'plan' => [], 'blocked' => [], 'rows_locked' => null, 'record_locks' => null];
+        $connection->afterExecuteHook = function (string $sql) use (&$observed, $workerThread, $mysql, $fresh, $candidates): void {
+            if (!str_contains($sql, 'FOR UPDATE')) {
+                return;
+            }
+            // Inside the claim transaction, right after its locking read.
+            ++$observed['locking_reads'];
+            $other = self::connection();
+            $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
+            $explained = preg_replace('/\bFOR UPDATE\b/', '', str_replace(':lease', '300', (string) preg_replace('/\(:id\d+(?:, :id\d+)*\)/', '(' . implode(', ', $candidates) . ')', $sql)));
+            foreach (($other->query('EXPLAIN ' . $explained) ?: throw new \LogicException('EXPLAIN failed'))->fetchAll(PDO::FETCH_ASSOC) as $step) {
+                $observed['plan'][] = [(string) ($step['key'] ?? ''), (string) ($step['type'] ?? '')];
+            }
+            usleep(150_000); // information_schema.INNODB_TRX is refreshed at most every 0.1 s
+            $observed['rows_locked'] = (int) self::scalar($other, "SELECT trx_rows_locked FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = $workerThread");
+            if ($mysql) {
+                $observed['record_locks'] = self::recordLocks($other, $workerThread);
+            }
+            // Every other worker records the outcome of its own in-flight row meanwhile.
+            foreach ($fresh as $id) {
+                $other->beginTransaction();
+                try {
+                    $other->exec("UPDATE cd_email_queue SET status = 'sent', sent_at = UTC_TIMESTAMP() WHERE id = $id");
+                } catch (PDOException $failure) {
+                    $observed['blocked'][] = $id . ': ' . ($failure->errorInfo[1] ?? '?');
+                } finally {
+                    $other->rollBack();
+                }
+            }
+        };
+
+        $this->worker($connection)->processBatch();
+
+        self::assertSame(1, $observed['locking_reads']);
+        self::assertSame([['PRIMARY', 'range']], $observed['plan'], 'The locking read looks the candidates up by primary key.');
+        self::assertSame([], $observed['blocked'], 'No outcome write on a fresh in-flight row waits for the claim.');
+        self::assertSame(count($candidates), $observed['rows_locked'], 'Exactly the candidates are locked (INNODB_TRX).');
+        if ($mysql) {
+            self::assertSame(
+                array_map(static fn (int $id): array => ['PRIMARY', 'X,REC_NOT_GAP', (string) $id], $candidates),
+                $observed['record_locks'],
+                'Only the candidates\' primary-key records are locked: no fresh row, no index entry, no gap (MySQL data_locks).',
+            );
+        }
+        foreach ($expired as $id) {
+            self::assertSame(['sent', '2'], [$this->row($id)['status'], $this->row($id)['attempts']], 'Each expired lease is claimed and sent again.');
+        }
+        foreach ($pending as $id) {
+            self::assertSame(['sent', '1'], [$this->row($id)['status'], $this->row($id)['attempts']]);
+        }
+        foreach ($fresh as $id) {
+            self::assertSame(['processing', '1'], [$this->row($id)['status'], $this->row($id)['attempts']]);
+        }
+        self::assertSame(5, $this->transport->calls);
+    }
+
     // ── lead review L2: a failure reason is cut on a character boundary ──
 
     public function testAFailureReasonCutInsideAMultibyteCharacterIsStillRecorded(): void
@@ -1267,6 +1431,71 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
             $this->pdo->exec("UPDATE cd_email_queue SET status = 'processing', attempts = 1, priority = 9, updated_at = UTC_TIMESTAMP() WHERE id = $id");
         }
         return $ids;
+    }
+
+    /**
+     * $count pending rows at priority 1 that are not due yet: scheduled for tomorrow, or retrying tomorrow.
+     *
+     * @return list<int>
+     */
+    private function seedNotDuePendingRows(int $count, string $notDue): array
+    {
+        $seed = $this->enqueue('not-due-seed');
+        [$scheduled, $retry] = $notDue === 'scheduled_at'
+            ? ['UTC_TIMESTAMP() + INTERVAL 1 DAY', 'NULL']
+            : ['UTC_TIMESTAMP() - INTERVAL 1 DAY', 'UTC_TIMESTAMP() + INTERVAL 1 DAY'];
+        $set = ['enqueue_receipt_id', 'priority', 'status', 'attempts', 'scheduled_at', 'retry_after'];
+        /** @var list<string> $all */
+        $all = ($this->pdo->query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cd_email_queue' AND COLUMN_NAME <> 'id' ORDER BY ORDINAL_POSITION") ?: throw new \LogicException('No columns'))->fetchAll(PDO::FETCH_COLUMN);
+        $copied = array_values(array_diff($all, $set));
+        $digits = '(SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9)';
+        // Legacy copies of the seed (no receipt), so the unique receipt key allows them.
+        $this->pdo->exec('INSERT INTO cd_email_queue (' . implode(', ', [...$copied, ...$set]) . ')
+            SELECT ' . implode(', ', array_map(static fn (string $column): string => 's.' . $column, $copied)) . ", NULL, 1, 'pending', 0, $scheduled, $retry
+            FROM cd_email_queue s, $digits a, $digits b, $digits c WHERE s.id = $seed LIMIT " . ($count - 1));
+        $this->pdo->exec("UPDATE cd_email_queue SET priority = 1, scheduled_at = $scheduled, retry_after = $retry WHERE id = $seed");
+        /** @var list<int> $ids */
+        $ids = array_map('intval', ($this->pdo->query("SELECT id FROM cd_email_queue WHERE status = 'pending' AND priority = 1 ORDER BY id") ?: throw new \LogicException('No rows'))->fetchAll(PDO::FETCH_COLUMN));
+        self::assertCount($count, $ids);
+        return $ids;
+    }
+
+    /** A plain enqueue INSERT of one due pending row at $priority (the legacy writer's shape). */
+    private static function enqueueStatement(int $priority): string
+    {
+        return "INSERT INTO cd_email_queue (entity_type, entity_id, recipient_encrypted, recipient_iv, recipient_tag, recipient_key_id,
+                payload_encrypted, payload_iv, payload_tag, payload_key_id, template_key, language, sender_type, priority, status,
+                attempts, scheduled_at, created_at, updated_at)
+            VALUES ('user', 'probe', 'x', 'iv', 'tag', 'k', 'x', 'iv', 'tag', 'k', 'welcome', 'en', 1, $priority, 'pending',
+                0, NOW(), NOW(), NOW())";
+    }
+
+    private static function isMysql(PDO $pdo): bool
+    {
+        $version = $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
+        return is_string($version) && !str_contains(strtolower($version), 'mariadb');
+    }
+
+    /**
+     * The record locks a connection's transaction holds right now (MySQL performance_schema.data_locks is live).
+     *
+     * @return list<array{string, string, string}> index, lock mode and the locked row's id, ordered by id
+     */
+    private static function recordLocks(PDO $observer, int $thread): array
+    {
+        $statement = $observer->query("
+            SELECT l.INDEX_NAME, l.LOCK_MODE, l.LOCK_DATA
+            FROM performance_schema.data_locks l
+            JOIN performance_schema.threads t ON t.THREAD_ID = l.THREAD_ID
+            WHERE t.PROCESSLIST_ID = $thread AND l.LOCK_TYPE = 'RECORD'");
+        $locks = [];
+        foreach (($statement ?: throw new \LogicException('data_locks query failed'))->fetchAll(PDO::FETCH_NUM) as [$index, $mode, $data]) {
+            // A secondary index entry lists its key columns and then the primary key: the id is the last value.
+            $parts = explode(',', (string) $data);
+            $locks[] = [(string) $index, (string) $mode, trim((string) end($parts))];
+        }
+        usort($locks, static fn (array $a, array $b): int => [(int) $a[2], $a[0]] <=> [(int) $b[2], $b[0]]);
+        return $locks;
     }
 
     private function waitForFile(string $path): bool

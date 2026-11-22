@@ -18,6 +18,8 @@ class SqliteTestPdo extends PDO
     public function prepare($query, $options = [])
     {
         $query = str_replace('FOR UPDATE', '', $query);
+        // MySQL index hint; SQLite plans the primary-key lookup on its own.
+        $query = str_replace('FORCE INDEX (PRIMARY)', '', $query);
         $query = str_replace('NOW()', "datetime('now')", $query);
         // MySQL DATE_SUB(<clock>, INTERVAL :param SECOND) → SQLite datetime(<clock>, '-N seconds').
         $query = preg_replace('/DATE_SUB\((.+?), INTERVAL (:\w+) SECOND\)/', "datetime($1, '-' || $2 || ' seconds')", $query) ?? $query;

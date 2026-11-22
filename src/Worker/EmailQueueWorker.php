@@ -138,53 +138,50 @@ final class EmailQueueWorker
                     payload_encrypted, payload_iv, payload_tag, payload_key_id,
                     attempts$bindingColumn";
 
-            // Expired leases first, without locking any row that is still in flight: an unlocked read of the
-            // candidate ids in (priority, id) order, then a locking read of only those rows by primary key that
-            // re-checks the predicate against the latest version. A locking scan of the `processing` range would
-            // lock every in-flight row (its index entry and primary key) and could deadlock with another worker's
-            // outcome write, which locks the primary key first. Taking these locks before the `pending` read also
-            // means this claim never waits for a primary key while it holds gap locks in the `pending` range.
-            $candidates = $pdo->prepare("SELECT id FROM `$table` WHERE $stalePredicate ORDER BY priority ASC, id ASC LIMIT :limit");
-            $candidates->bindValue(':lease', $this->processingLeaseSeconds, PDO::PARAM_INT);
-            $candidates->bindValue(':limit', $limit, PDO::PARAM_INT);
-            $candidates->execute();
-            $staleIds = array_map('intval', $candidates->fetchAll(PDO::FETCH_COLUMN));
-            /** @var list<EmailQueueRow> $staleRows */
-            $staleRows = [];
-            if ($staleIds !== []) {
+            $duePredicate = "status = 'pending' AND scheduled_at <= $dueClock AND (retry_after IS NULL OR retry_after <= $dueClock)";
+
+            // Candidates first, without locks: the ids of expired-lease rows and of due `pending` rows, each in
+            // (priority, id) order with the batch limit. With an index led by (status, priority, id) each read
+            // walks its status in order. A locking scan would lock every entry it walks past: in-flight rows (and
+            // deadlock with their outcome writes, which lock the primary key first), and `pending` rows that are
+            // not yet due, with the gaps between them, so enqueues and reschedules would wait for the claim.
+            $staleCandidates = $pdo->prepare("SELECT id FROM `$table` WHERE $stalePredicate ORDER BY priority ASC, id ASC LIMIT :limit");
+            $staleCandidates->bindValue(':lease', $this->processingLeaseSeconds, PDO::PARAM_INT);
+            $staleCandidates->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $staleCandidates->execute();
+            $dueCandidates = $pdo->prepare("SELECT id FROM `$table` WHERE $duePredicate ORDER BY priority ASC, id ASC LIMIT :limit");
+            $dueCandidates->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $dueCandidates->execute();
+            $candidateIds = array_values(array_unique(array_map('intval', [
+                ...$staleCandidates->fetchAll(PDO::FETCH_COLUMN),
+                ...$dueCandidates->fetchAll(PDO::FETCH_COLUMN),
+            ])));
+
+            /** @var list<EmailQueueRow> $rows */
+            $rows = [];
+            if ($candidateIds !== []) {
+                // Then one locking read of only those rows, by primary key in id order, so that concurrent claims
+                // lock in the same order. It re-checks both predicates on the latest version: a candidate another
+                // worker claimed, renewed or settled meanwhile is not taken (it stays locked until this commit).
                 $named = [];
-                foreach ($staleIds as $index => $staleId) {
-                    $named[':id' . $index] = $staleId;
+                foreach ($candidateIds as $index => $candidateId) {
+                    $named[':id' . $index] = $candidateId;
                 }
-                $lock = $pdo->prepare("SELECT $columnList FROM `$table` WHERE id IN (" . implode(', ', array_keys($named)) . ") AND $stalePredicate FOR UPDATE");
-                foreach ($named as $placeholder => $staleId) {
-                    $lock->bindValue($placeholder, $staleId, PDO::PARAM_INT);
+                $lock = $pdo->prepare("
+                    SELECT $columnList
+                    FROM `$table` FORCE INDEX (PRIMARY)
+                    WHERE id IN (" . implode(', ', array_keys($named)) . ")
+                      AND (($duePredicate) OR ($stalePredicate))
+                    ORDER BY id ASC
+                    FOR UPDATE
+                ");
+                foreach ($named as $placeholder => $candidateId) {
+                    $lock->bindValue($placeholder, $candidateId, PDO::PARAM_INT);
                 }
                 $lock->bindValue(':lease', $this->processingLeaseSeconds, PDO::PARAM_INT);
                 $lock->execute();
-                /** @var list<EmailQueueRow> $staleRows */
-                $staleRows = $lock->fetchAll(PDO::FETCH_ASSOC);
-            }
-
-            // Then due `pending` rows, in (priority, id) order with the batch limit. With an index led by
-            // (status, priority, id) the read walks the `pending` entries in order and stops at the limit.
-            $due = $pdo->prepare("
-                SELECT $columnList
-                FROM `$table`
-                WHERE status = 'pending'
-                  AND scheduled_at <= $dueClock
-                  AND (retry_after IS NULL OR retry_after <= $dueClock)
-                ORDER BY priority ASC, id ASC
-                LIMIT :limit
-                FOR UPDATE
-            ");
-            $due->bindValue(':limit', $limit, PDO::PARAM_INT);
-            $due->execute();
-            /** @var list<EmailQueueRow> $rows */
-            $rows = $due->fetchAll(PDO::FETCH_ASSOC);
-
-            if ($staleRows !== []) {
-                $rows = array_merge($rows, $staleRows);
+                /** @var list<EmailQueueRow> $rows */
+                $rows = $lock->fetchAll(PDO::FETCH_ASSOC);
                 usort($rows, static fn (array $a, array $b): int => [(int) $a['priority'], (int) $a['id']] <=> [(int) $b['priority'], (int) $b['id']]);
                 $rows = array_slice($rows, 0, max(0, $limit));
             }
