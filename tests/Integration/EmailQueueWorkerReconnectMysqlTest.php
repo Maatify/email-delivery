@@ -706,6 +706,22 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertCount(2, $claimReads, 'One locking read per status.');
     }
 
+    public function testTheBatchLimitAndOrderSpanBothClaimReads(): void
+    {
+        $epoch = (new DateTimeImmutable(self::NOW))->getTimestamp();
+        $pending = $this->enqueue('key-1');
+        $expired = $this->stale($this->enqueue('key-2'), 1, gmdate('Y-m-d H:i:s', $epoch - 3600));
+        // The expired row comes from the second read but sorts first.
+        $this->pdo->exec("UPDATE cd_email_queue SET priority = 1 WHERE id = $expired");
+        $this->freeze($this->pdo, $epoch, '+00:00');
+
+        $this->worker($this->pdo)->processBatch(1);
+
+        self::assertSame(['sent', '2'], [$this->row($expired)['status'], $this->row($expired)['attempts']]);
+        self::assertSame(['pending', '0'], [$this->row($pending)['status'], $this->row($pending)['attempts']], 'Only one row per batch of one.');
+        self::assertSame(1, $this->transport->calls);
+    }
+
     // ── lost acknowledgement after a 2013 (review point 3) ────────
 
     public function testASentWriteWhoseAcknowledgementIsLostKeepsTheFirstSentTime(): void
