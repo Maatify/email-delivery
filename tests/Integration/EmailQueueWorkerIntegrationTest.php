@@ -358,10 +358,11 @@ class EmailQueueWorkerIntegrationTest extends TestCase
         $stmtMock = $this->createMock(\PDOStatement::class);
         $stmtMock->method('fetchAll')->willReturn([]);
 
-        // Two locking reads: due pending rows, then processing rows whose lease expired.
+        // Two ordered reads: the unlocked read of expired-lease candidates (none here, so no locking read
+        // follows), then the locking read of due pending rows.
         $realPdoMock->expects($this->exactly(2))
             ->method('prepare')
-            ->with($this->stringContains('FOR UPDATE'))
+            ->with($this->stringContains('ORDER BY priority ASC, id ASC'))
             ->willReturn($stmtMock);
 
         $realPdoMock->expects($this->once())

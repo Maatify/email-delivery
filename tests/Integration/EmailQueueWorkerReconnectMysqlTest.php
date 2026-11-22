@@ -788,11 +788,13 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         $claimReads = [];
         $observed = [];
         $connection->afterExecuteHook = function (string $sql) use (&$claimReads, &$observed, $workerThread, $finished): void {
-            if (!str_contains($sql, 'FOR UPDATE')) {
+            if (!str_contains($sql, 'ORDER BY priority')) {
                 return;
             }
             $claimReads[] = $sql;
-            // Inside the claim transaction, after each locking read (the last measurement covers them all).
+            // Inside the claim transaction, after each ordered read (the last measurement covers them all).
+            // information_schema.INNODB_TRX is refreshed at most every 0.1 s: wait for a fresh reading.
+            usleep(150_000);
             $other = self::connection();
             $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
             $observed['rows_locked'] = (int) self::scalar($other, "SELECT trx_rows_locked FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = $workerThread");
@@ -813,6 +815,7 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame('no wait', $observed['finished_row_write'] ?? null, 'A finished row stays writable while the claim runs.');
         self::assertLessThan(100, $observed['rows_locked'] ?? PHP_INT_MAX, 'With 301 due rows, the claim locks about a batch, not every due row.');
         foreach ($claimReads as $sql) {
+            // The expired-lease candidate read and the due pending read both walk the claim index in order.
             $plan = $this->pdo->prepare('EXPLAIN ' . str_replace('FOR UPDATE', '', $sql));
             $plan->bindValue(':limit', 10, PDO::PARAM_INT);
             if (str_contains($sql, ':lease')) {
@@ -824,7 +827,7 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
             self::assertSame('idx_email_queue_claim', $row['key'], $sql);
             self::assertStringNotContainsString('filesort', (string) $row['Extra'], 'Read in index order, stopping at the limit.');
         }
-        self::assertCount(2, $claimReads, 'One locking read per status.');
+        self::assertCount(2, $claimReads, 'One ordered read per status.');
     }
 
     public function testTheBatchLimitAndOrderSpanBothClaimReads(): void
@@ -862,12 +865,22 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame([], $this->logger->contexts('error', self::SENT_UNRECORDED));
     }
 
-    public function testARetryWriteWhoseAcknowledgementIsLostCountsAsRecordedAndKeepsTheFirstRetryTime(): void
+    /** @return iterable<string, array{string}> */
+    public static function failureReasons(): iterable
+    {
+        yield 'ASCII reason' => ['Fixture SMTP failure; no network'];
+        // Cut inside a two-byte character at byte 128: the stored value must match on the repeat.
+        yield 'reason cut at a multibyte character' => [str_repeat('a', 105) . 'é and more'];
+    }
+
+    #[DataProvider('failureReasons')]
+    public function testARetryWriteWhoseAcknowledgementIsLostCountsAsRecordedAndKeepsTheFirstRetryTime(string $reason): void
     {
         $job = $this->enqueue('key-1');
         $faults = 0;
         $worker = $this->worker($this->lostAcknowledgementFactory("status      = 'pending'", $faults));
         $this->transport->fail = true;
+        $this->transport->failureMessage = $reason;
 
         $error = $this->errorOf(static fn () => $worker->processBatch());
 
@@ -1001,6 +1014,159 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame(1, $this->transport->calls);
     }
 
+    // ── lead review L1: the claim never locks an in-flight row ────
+
+    public function testTheClaimLocksNoFreshProcessingRow(): void
+    {
+        $due = $this->enqueue('key-1');
+        $fresh = $this->seedInFlightRows(40);
+        $connection = new EmailQueueFaultPdo();
+        $workerThread = (int) self::scalar($connection, 'SELECT CONNECTION_ID()');
+        $version = $connection->getAttribute(PDO::ATTR_SERVER_VERSION);
+        $mysql = is_string($version) && !str_contains(strtolower($version), 'mariadb');
+        $observed = ['locking_reads' => 0, 'blocked' => [], 'fresh_primary_locks' => 0];
+        $connection->afterExecuteHook = function (string $sql) use (&$observed, $workerThread, $fresh, $mysql): void {
+            if (!str_contains($sql, 'FOR UPDATE')) {
+                return;
+            }
+            // Inside the claim transaction, after each locking read.
+            ++$observed['locking_reads'];
+            $other = self::connection();
+            if ($mysql) {
+                // performance_schema.data_locks is live (information_schema.INNODB_TRX is cached for 0.1 s).
+                $observed['fresh_primary_locks'] = max($observed['fresh_primary_locks'], (int) self::scalar($other, "
+                    SELECT COUNT(*) FROM performance_schema.data_locks l
+                    JOIN performance_schema.threads t ON t.THREAD_ID = l.THREAD_ID
+                    WHERE t.PROCESSLIST_ID = $workerThread AND l.INDEX_NAME = 'PRIMARY' AND l.LOCK_TYPE = 'RECORD'
+                      AND l.LOCK_DATA IN (" . implode(',', $fresh) . ')'));
+            }
+            // Every other worker records the outcome of its own in-flight row meanwhile.
+            $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
+            foreach ($fresh as $id) {
+                $other->beginTransaction();
+                try {
+                    $other->exec("UPDATE cd_email_queue SET status = 'sent', sent_at = UTC_TIMESTAMP() WHERE id = $id");
+                } catch (PDOException $failure) {
+                    $observed['blocked'][] = $id . ': ' . ($failure->errorInfo[1] ?? '?');
+                    break;
+                } finally {
+                    $other->rollBack();
+                }
+            }
+        };
+
+        $this->worker($connection)->processBatch();
+
+        self::assertSame('sent', $this->row($due)['status']);
+        self::assertGreaterThan(0, $observed['locking_reads']);
+        self::assertSame(0, $observed['fresh_primary_locks'], 'No fresh processing row is locked by primary key (MySQL data_locks).');
+        self::assertSame([], $observed['blocked'], 'Every in-flight row stays writable while the claim runs.');
+    }
+
+    public function testAnOutcomeWriteOnAnInFlightRowNeverDeadlocksWithAConcurrentClaim(): void
+    {
+        $due = $this->enqueue('key-1');
+        $inFlight = $this->seedInFlightRows(1)[0];
+        $this->pdo->exec("UPDATE cd_email_queue SET priority = 1 WHERE id = $inFlight");
+        $directory = sys_get_temp_dir() . '/email-claim-race-' . bin2hex(random_bytes(6));
+        self::assertTrue(mkdir($directory, 0700));
+        $child = proc_open([PHP_BINARY, dirname(__DIR__) . '/Support/email-outcome-writer.php', $directory, (string) $inFlight], [
+            0 => ['file', '/dev/null', 'r'], 1 => ['file', "$directory/stdout", 'w'], 2 => ['file', "$directory/stderr", 'w'],
+        ], $pipes);
+        self::assertIsResource($child);
+        try {
+            self::assertTrue($this->waitForFile("$directory/locked"), 'Child stderr: ' . @file_get_contents("$directory/stderr"));
+            $connection = new EmailQueueFaultPdo();
+            $connection->afterExecuteHook = static function (string $sql) use ($directory): void {
+                // The other worker records its outcome while this claim is running.
+                if (str_contains($sql, 'ORDER BY priority') && !is_file("$directory/go")) {
+                    touch("$directory/go");
+                }
+            };
+
+            $claimError = $this->errorOf(fn () => $this->worker($connection)->processBatch());
+
+            self::assertTrue($this->waitForFile("$directory/result"), 'Child stderr: ' . @file_get_contents("$directory/stderr"));
+            self::assertSame(['claim' => null, 'other worker' => 'ok'], ['claim' => $claimError, 'other worker' => (string) file_get_contents("$directory/result")], 'No deadlock (1213) on either side.');
+            self::assertSame('sent', $this->row($inFlight)['status']);
+            self::assertSame('sent', $this->row($due)['status']);
+        } finally {
+            proc_close($child);
+            array_map('unlink', glob("$directory/*") ?: []);
+            rmdir($directory);
+        }
+    }
+
+    // ── lead review L2: a failure reason is cut on a character boundary ──
+
+    public function testAFailureReasonCutInsideAMultibyteCharacterIsStillRecorded(): void
+    {
+        $job = $this->enqueue('key-1');
+        $this->transport->fail = true;
+        // "smtp_transport_error: " is 22 bytes, so the two-byte "é" occupies bytes 127 and 128.
+        $this->transport->failureMessage = str_repeat('a', 105) . 'é and more';
+
+        $this->worker($this->pdo)->processBatch();
+
+        $row = $this->row($job);
+        self::assertSame('pending', $row['status'], 'The retry was recorded.');
+        self::assertSame('smtp_transport_error: ' . str_repeat('a', 105), $row['last_error'], 'Cut before the character, never inside it.');
+        self::assertCount(1, $this->logger->contexts('info', 'Email job scheduled for retry'));
+    }
+
+    // ── lead review L3: daylight saving time on a TIMESTAMP lease ──
+
+    /** @return iterable<string, array{string, int, ?int, int, bool}> */
+    public static function daylightSavingCases(): iterable
+    {
+        $spring = gmmktime(7, 0, 0, 3, 10, 2030); // America/New_York: 02:00 EST jumps to 03:00 EDT
+        $fall = gmmktime(6, 0, 0, 11, 3, 2030);   // America/New_York: 02:00 EDT falls back to 01:00 EST
+        // [stamp, stamped at, renewed at (null: no renewal), checked at, expected to be claimed again]; lease 300 s.
+        yield 'spring forward, claimed 120 s before the check' => ['claim', $spring - 60, null, $spring + 60, false];
+        yield 'spring forward, claimed 460 s before the check' => ['claim', $spring - 400, null, $spring + 60, true];
+        yield 'spring forward, renewal 120 s before the check' => ['claim', $spring - 400, $spring - 60, $spring + 60, false];
+        yield 'fall back, claimed in the repeated hour 120 s before' => ['claim', $fall + 100, null, $fall + 220, false];
+        yield 'fall back, claimed in the repeated hour 310 s before' => ['claim', $fall + 100, null, $fall + 410, true];
+        yield 'fall back, claimed before the hour, 370 s before' => ['claim', $fall - 60, null, $fall + 310, true];
+        yield 'fall back, renewal in the repeated hour 120 s before' => ['claim', $fall - 400, $fall + 100, $fall + 220, false];
+        yield 'spring forward, ON UPDATE stamp 120 s before' => ['on update', $spring - 60, null, $spring + 60, false];
+        yield 'fall back, ON UPDATE stamp in the repeated hour 120 s before' => ['on update', $fall + 100, null, $fall + 220, false];
+        yield 'fall back, ON UPDATE stamp in the repeated hour 310 s before' => ['on update', $fall + 100, null, $fall + 410, true];
+    }
+
+    #[DataProvider('daylightSavingCases')]
+    public function testOnATimestampLeaseColumnDaylightSavingNeverReclaimsEarlyOrMissesTheLease(string $stamp, int $stampedAt, ?int $renewedAt, int $checkedAt, bool $reclaimed): void
+    {
+        $this->useTimestampLeaseColumn();
+        $job = $this->enqueue('key-1');
+        $checker = $this->worker($this->dstSession($checkedAt), EmailQueueWorker::DEFAULT_PROCESSING_LEASE_SECONDS);
+        if ($stamp === 'on update') {
+            // An older worker's claim: status and attempts only; ON UPDATE CURRENT_TIMESTAMP stamps the instant.
+            $this->dstSession($stampedAt)->exec("UPDATE cd_email_queue SET status = 'processing', attempts = attempts + 1 WHERE id = $job");
+            $checker->processBatch();
+        } else {
+            $claimer = new EmailQueueFaultPdo();
+            $this->inDstZone($claimer, $stampedAt);
+            if ($renewedAt !== null) {
+                // The claim stamps at $stampedAt; the renewal right after it stamps at $renewedAt.
+                $claimer->afterExecuteHook = static function (string $sql) use ($claimer, $renewedAt): void {
+                    if (str_contains($sql, "SET status     = 'processing'")) {
+                        $claimer->exec('SET timestamp = ' . $renewedAt);
+                    }
+                };
+            }
+            $this->transport->duringSend = static function (int $call) use ($checker): void {
+                if ($call === 1) {
+                    $checker->processBatch();
+                }
+            };
+            $this->worker($claimer)->processBatch();
+        }
+
+        $expectedAttempts = $reclaimed ? '2' : '1';
+        self::assertSame($expectedAttempts, $this->row($job)['attempts'], $reclaimed ? 'Claimed again after its lease.' : 'Still leased: never claimed again early.');
+    }
+
     // ── fixture helpers ───────────────────────────────────────────
 
     private function assertSettledAtTheCapAndOwnershipLost(int $job): void
@@ -1048,6 +1214,44 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertIsArray($row);
         /** @var array<string, mixed> $row */
         return $row;
+    }
+
+    /** @return list<int> ids of rows other workers are sending right now (fresh leases), at the lowest priority */
+    private function seedInFlightRows(int $count): array
+    {
+        $ids = [];
+        for ($i = 0; $i < $count; ++$i) {
+            $ids[] = $id = $this->enqueue('in-flight-' . $i);
+            $this->pdo->exec("UPDATE cd_email_queue SET status = 'processing', attempts = 1, priority = 9, updated_at = UTC_TIMESTAMP() WHERE id = $id");
+        }
+        return $ids;
+    }
+
+    private function waitForFile(string $path): bool
+    {
+        $deadline = microtime(true) + 20;
+        while (!is_file($path) && microtime(true) < $deadline) {
+            usleep(10_000);
+        }
+        return is_file($path);
+    }
+
+    /** A connection in America/New_York (a zone with daylight saving) frozen at $epoch. */
+    private function dstSession(int $epoch): PDO
+    {
+        $pdo = $this->rawConnection([]);
+        $this->inDstZone($pdo, $epoch);
+        return $pdo;
+    }
+
+    private function inDstZone(PDO $pdo, int $epoch): void
+    {
+        try {
+            $pdo->exec("SET SESSION time_zone = 'America/New_York'");
+        } catch (PDOException $missing) {
+            self::markTestSkipped('The server has no time zone tables loaded: ' . $missing->getMessage());
+        }
+        $pdo->exec('SET timestamp = ' . $epoch);
     }
 
     /** The column type some application schemas use: TIMESTAMP stores instants and converts by session zone. */

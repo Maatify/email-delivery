@@ -122,44 +122,66 @@ final class EmailQueueWorker
             $dueClock = $hasBinding
                 ? 'CASE WHEN enqueue_receipt_id IS NULL THEN NOW() ELSE UTC_TIMESTAMP() END'
                 : 'NOW()';
-            // The lease follows the column type. A DATETIME updated_at (the package schema) holds wall-clock
-            // values, so it keeps each row's own clock. A TIMESTAMP updated_at (some application schemas)
-            // stores instants and converts them by session zone, so it is stamped and compared with NOW()
-            // for every row: correct in any session zone and against ON UPDATE CURRENT_TIMESTAMP stamps.
-            $leaseClock = $columns['timestampLease'] ? 'NOW()' : $dueClock;
-
-            // Two locking reads, one per status, each in (priority, id) order with the batch limit. With an
-            // index led by (status, priority, id) each one walks its status in order and stops at the limit,
-            // so it locks about a batch of rows. A single `pending OR processing` read would need a filesort
-            // over every active row and lock them all. Merging both results keeps the same first rows.
-            $select = "
-                SELECT
-                    id, status, priority,
+            // The lease follows the column type. A DATETIME updated_at (the package schema) holds wall-clock values,
+            // so it keeps each row's own clock. A TIMESTAMP updated_at (some application schemas) stores instants and
+            // converts them by session zone, so it is compared as instants (immune to daylight saving jumps) and
+            // stamped with an expression that stores the exact instant even in a repeated daylight saving hour.
+            if ($columns['timestampLease']) {
+                $leaseStamp = self::instantStamp($pdo);
+                $stalePredicate = "status = 'processing' AND UNIX_TIMESTAMP(updated_at) < UNIX_TIMESTAMP() - :lease";
+            } else {
+                $leaseStamp = $dueClock;
+                $stalePredicate = "status = 'processing' AND updated_at < DATE_SUB($dueClock, INTERVAL :lease SECOND)";
+            }
+            $columnList = "id, status, priority,
                     recipient_encrypted, recipient_iv, recipient_tag, recipient_key_id,
                     payload_encrypted, payload_iv, payload_tag, payload_key_id,
-                    attempts$bindingColumn
+                    attempts$bindingColumn";
+
+            // Expired leases first, without locking any row that is still in flight: an unlocked read of the
+            // candidate ids in (priority, id) order, then a locking read of only those rows by primary key that
+            // re-checks the predicate against the latest version. A locking scan of the `processing` range would
+            // lock every in-flight row (its index entry and primary key) and could deadlock with another worker's
+            // outcome write, which locks the primary key first. Taking these locks before the `pending` read also
+            // means this claim never waits for a primary key while it holds gap locks in the `pending` range.
+            $candidates = $pdo->prepare("SELECT id FROM `$table` WHERE $stalePredicate ORDER BY priority ASC, id ASC LIMIT :limit");
+            $candidates->bindValue(':lease', $this->processingLeaseSeconds, PDO::PARAM_INT);
+            $candidates->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $candidates->execute();
+            $staleIds = array_map('intval', $candidates->fetchAll(PDO::FETCH_COLUMN));
+            /** @var list<EmailQueueRow> $staleRows */
+            $staleRows = [];
+            if ($staleIds !== []) {
+                $named = [];
+                foreach ($staleIds as $index => $staleId) {
+                    $named[':id' . $index] = $staleId;
+                }
+                $lock = $pdo->prepare("SELECT $columnList FROM `$table` WHERE id IN (" . implode(', ', array_keys($named)) . ") AND $stalePredicate FOR UPDATE");
+                foreach ($named as $placeholder => $staleId) {
+                    $lock->bindValue($placeholder, $staleId, PDO::PARAM_INT);
+                }
+                $lock->bindValue(':lease', $this->processingLeaseSeconds, PDO::PARAM_INT);
+                $lock->execute();
+                /** @var list<EmailQueueRow> $staleRows */
+                $staleRows = $lock->fetchAll(PDO::FETCH_ASSOC);
+            }
+
+            // Then due `pending` rows, in (priority, id) order with the batch limit. With an index led by
+            // (status, priority, id) the read walks the `pending` entries in order and stops at the limit.
+            $due = $pdo->prepare("
+                SELECT $columnList
                 FROM `$table`
-                WHERE %s
+                WHERE status = 'pending'
+                  AND scheduled_at <= $dueClock
+                  AND (retry_after IS NULL OR retry_after <= $dueClock)
                 ORDER BY priority ASC, id ASC
                 LIMIT :limit
                 FOR UPDATE
-            ";
-
-            $due = $pdo->prepare(sprintf($select, "status = 'pending'
-                  AND scheduled_at <= $dueClock
-                  AND (retry_after IS NULL OR retry_after <= $dueClock)"));
+            ");
             $due->bindValue(':limit', $limit, PDO::PARAM_INT);
             $due->execute();
             /** @var list<EmailQueueRow> $rows */
             $rows = $due->fetchAll(PDO::FETCH_ASSOC);
-
-            $stale = $pdo->prepare(sprintf($select, "status = 'processing'
-                  AND updated_at < DATE_SUB($leaseClock, INTERVAL :lease SECOND)"));
-            $stale->bindValue(':lease', $this->processingLeaseSeconds, PDO::PARAM_INT);
-            $stale->bindValue(':limit', $limit, PDO::PARAM_INT);
-            $stale->execute();
-            /** @var list<EmailQueueRow> $staleRows */
-            $staleRows = $stale->fetchAll(PDO::FETCH_ASSOC);
 
             if ($staleRows !== []) {
                 $rows = array_merge($rows, $staleRows);
@@ -189,7 +211,7 @@ final class EmailQueueWorker
                     UPDATE `$table`
                     SET status     = 'processing',
                         attempts   = attempts + 1,
-                        updated_at = $leaseClock
+                        updated_at = $leaseStamp
                     WHERE id IN ($placeholders)
                 ")->execute($ids);
             }
@@ -201,7 +223,7 @@ final class EmailQueueWorker
                     UPDATE `$table`
                     SET status     = 'failed',
                         last_error = 'processing_lease_expired',
-                        updated_at = $leaseClock
+                        updated_at = $leaseStamp
                     WHERE id IN ($placeholders)
                 ")->execute($expired);
             }
@@ -221,22 +243,22 @@ final class EmailQueueWorker
         }
 
         foreach ($claimed as $row) {
-            $this->processRow($row, $columns['timestampLease']);
+            $this->processRow($row, $columns['timestampLease'] ? $leaseStamp : null);
         }
     }
 
     /**
      * @param EmailQueueRow $row
-     * @param bool $timestampLease the lease column is a TIMESTAMP, renewed with NOW() for every row
+     * @param string|null $timestampStamp on a TIMESTAMP lease column, the instant stamp every row is renewed with
      */
-    private function processRow(array $row, bool $timestampLease): void
+    private function processRow(array $row, ?string $timestampStamp): void
     {
         $id      = (int) $row['id'];
         $attempt = (int) $row['attempts'] + 1;
         $keyed   = isset($row['enqueue_receipt_id']);
         $clock   = $keyed ? 'UTC_TIMESTAMP()' : 'NOW()';
 
-        if (!$this->renewLease($id, $attempt, $timestampLease ? 'NOW()' : $clock)) {
+        if (!$this->renewLease($id, $attempt, $timestampStamp ?? $clock)) {
             $this->logger->warning('Email job skipped: the row is no longer processing under this attempt', [
                 'job_id'  => $id,
                 'attempt' => $attempt,
@@ -407,7 +429,9 @@ final class EmailQueueWorker
         };
 
         $rootCause = $e->getPrevious()?->getMessage() ?? $e->getMessage();
-        $errorMsg  = substr($errorCode . ': ' . $rootCause, 0, 128);
+        // At most 128 bytes, cut on a UTF-8 character boundary: a split character would make the write fail
+        // under strict SQL mode, and a lost-acknowledgement repeat compares this value exactly.
+        $errorMsg  = mb_strcut($errorCode . ': ' . $rootCause, 0, 128, 'UTF-8');
 
         // ── Log the failure ───────────────────────────────
         $this->logger->error('Email job failed', [
@@ -687,6 +711,23 @@ final class EmailQueueWorker
         $row = $statement->fetch(PDO::FETCH_ASSOC);
         $statement->closeCursor();
         return $row === false ? null : $row;
+    }
+
+    /**
+     * An expression that stores the current instant exactly in a TIMESTAMP column, in any session zone. A local
+     * time is ambiguous in the repeated hour after a daylight saving fall-back: there, MySQL stores a local
+     * NOW() as the earlier of the two instants (one hour early), while MariaDB stores a directly assigned
+     * NOW() exactly. MySQL 8.0.19+ stores a UTC value with an explicit offset exactly. Read from the
+     * connection attributes, without a query.
+     */
+    private static function instantStamp(PDO $pdo): string
+    {
+        $version = $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
+        $version = is_string($version) ? $version : '';
+        if (!str_contains(strtolower($version), 'mariadb') && version_compare(explode('-', $version)[0], '8.0.19', '>=')) {
+            return "CONCAT(UTC_TIMESTAMP(), '+00:00')";
+        }
+        return 'NOW()';
     }
 
     /**
