@@ -9,15 +9,18 @@ defines dependency-taking functions and does nothing at include time.
 
 ## Application bootstrap
 
-1. Apply the correct [fresh/upgrade SQL](../upgrade.md) before keyed callers run.
+1. Apply the correct [fresh/upgrade SQL](../upgrade.md) before keyed callers run, including the worker's
+   claim index `005`.
 2. Pass a connection factory, a `Closure(): PDO` that opens a new dedicated exception-mode connection
-   and applies your session settings each time it is called. The worker calls it on first use and
+   with autocommit enabled (the MySQL/MariaDB default) and applies your session settings each time it is
+   called. The worker rejects a connection without autocommit before claiming anything. The worker calls it on first use and
    again only after the server closed its connection. A `PDO` instance is still accepted, but then
    the worker cannot reconnect. Do not wrap the worker in another transaction.
 3. Supply read keys for queued payloads/recipients and stable contexts, plus trusted template root/globals.
 4. Construct the transport with [explicit SMTP encryption](configure-smtp.md) and restricted diagnostics.
 5. Optionally pass `processingLeaseSeconds` (default 300): how long a claimed row may stay `processing`
-   without renewal before a later batch claims it again. Keep it above your longest render and send.
+   without renewal before a later batch claims it again. Nothing bounds one render and send; size the
+   lease as the [worker book](../book/worker.md#processing-lease) describes.
 6. Call `processBatch(50)` from your application's supervised process. Select batch size/polling/supervision
    in the application.
 

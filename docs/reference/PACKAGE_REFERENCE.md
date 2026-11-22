@@ -93,13 +93,17 @@ escape; do not infer that every worker failure is swallowed. See [worker](../boo
 and [retry behavior](../book/retry-mechanism.md).
 
 **Unreleased.** The first constructor argument is `PDO|Closure(): PDO`. A factory must return a new
-exception-mode connection; it is called on first use and only again after the server closed the
+exception-mode connection. On MySQL/MariaDB every worker connection must have autocommit enabled; a
+connection without it is rejected with `UnexpectedValueException` before any claim, and the worker
+never changes the setting. The factory is called on first use and only again after the server closed the
 connection, which the worker replaces before the claim transaction and once around each single status
 statement (driver errors 2006, 2013, 4031). The claim transaction is never retried. A `PDO` instance
 cannot reconnect. The optional `processingLeaseSeconds` (default `DEFAULT_PROCESSING_LEASE_SECONDS`, 300,
 minimum 1) is how long a `processing` row may go without renewal: the claim stamps `updated_at` with the
 row's clock and each row renews it before its send. An expired row under the attempt cap is claimed and
-sent again; at the cap it is settled `failed` with `processing_lease_expired`. Retry/failed writes are
+sent again; at the cap it is settled `failed` with `processing_lease_expired`. The claim reads through
+`idx_email_queue_claim` from schema 005; without it the claim locks the whole table. A repeat after a lost
+acknowledgement keeps the first `sent_at` and `retry_after`. Retry/failed writes are
 fenced by attempt; the `sent` write is not. A failed `sent` write never writes pending/failed: it is
 logged (`Email sent but status write failed`) and the row is left to its lease. For every outcome write,
 a connection still lost after one reconnect is rethrown and stops the batch; other errors, such as a lock

@@ -18,6 +18,12 @@ Published dates below use the corresponding GitHub Release publication date in U
   settled `failed` with `processing_lease_expired`, without a send. The claim stamps the lease and
   each row renews it right before its send. Default `EmailQueueWorker::DEFAULT_PROCESSING_LEASE_SECONDS`
   (300 seconds); configurable through the optional `processingLeaseSeconds` argument.
+- Schema `005_email_queue_claim_index.sql` (#13): an online claim index, `idx_email_queue_claim (status,
+  priority, id)`, for every installation. On a 100,000-row mixed table the claim's locking read went from
+  a full scan that locks every row to a range read that locks only `pending` and `processing` rows. Its
+  transaction time went from about 55–75 ms to 7–9 ms on MySQL 8.0 and MariaDB 11.4. See the
+  [worker book](docs/book/worker.md#claim-index-and-locks).
+- The worker checks that each MySQL/MariaDB connection has autocommit enabled before using it (#13).
 
 ### Fixed
 - A send that outlasts the server's idle timeout no longer leaves its row `processing` forever, and
@@ -32,7 +38,12 @@ Published dates below use the corresponding GitHub Release publication date in U
   to its lease, and the next row is processed.
 - Before PHP 8.4, the driver's disconnect warning (`Packets out of order`) no longer reaches the
   application during these statements, so a handler that turns warnings into exceptions no longer
-  hides the lost connection and blocks the reconnect.
+  hides the lost connection and blocks the reconnect. A held warning that does not accompany a lost
+  connection is logged (`Database driver warning during an email queue statement`) and never raised
+  again, so the original exception or result reaches the caller unchanged.
+- A status write repeated after its acknowledgement was lost (2013) has a defined effect. `sent_at`
+  keeps the first recorded send time. A retry/failed write that already applied counts as recorded and
+  keeps its first `retry_after`; it is no longer reported as "no longer processing".
 
 ### Compatibility and limits
 - Semantic versioning: additive and backward compatible within 1.x (a minor release). The first
@@ -40,9 +51,12 @@ Published dates below use the corresponding GitHub Release publication date in U
   and a public constant are added. The class stays `final` and is no longer declared `readonly`.
 - Delivery is at-least-once: a message may be sent twice when its `sent` status cannot be recorded
   even after one reconnect, or when one render and send outlasts the lease.
-- No schema change. Rows left `processing` by an earlier version become claimable on the first
+- One additive index (`005`), applied online. The worker works without it, but its claim then locks
+  the whole table, as 1.2.0 already does. Rows left `processing` by an earlier version become claimable on the first
   upgraded batch and may be sent again; review them first, and do not run older and newer workers on
   the same table. Each row now costs two more statements (lease renewal and ownership read).
+- `PDO` instance users whose connection has autocommit off now get `UnexpectedValueException` before
+  any claim. Factory connections are checked the same way, and the worker never changes the setting.
 - The worker now writes `updated_at` when it claims a row and before each send. External scripts that
   select stale `processing` rows by `updated_at` therefore measure from the claim or renewal, not from
   enqueue time.

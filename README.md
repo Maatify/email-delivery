@@ -86,6 +86,7 @@ Monolog is not a package dependency.
 
 Apply the [schema installation/upgrade](docs/upgrade.md) before adopting the keyed API. Do not run
 all numbered SQL files on a fresh installation: the binding upgrade is for an existing legacy table.
+The worker's claim index (`005`, Unreleased) applies to every installation, fresh or existing.
 
 Synthetic recording uses an optional independent table and separate crypto domains. Its retention is
 explicitly configured by the consumer; cleanup is scheduled externally. It provides no constant-time or
@@ -135,7 +136,8 @@ supervised process using the [worker guide](docs/how-to/setup-worker.md).
 
 Unreleased (after 1.2.0): construct the worker with a connection factory, `Closure(): PDO`, so it can
 replace a connection the server closed while a send was running. A `processing` row whose lease
-expires (default 300 seconds, configurable) is claimed again; delivery is at-least-once. See the
+expires (default 300 seconds, configurable) is claimed again; delivery is at-least-once. Worker connections
+need autocommit enabled, and the claim index `005` keeps the claim from locking the whole table. See the
 [processing lease](docs/book/worker.md#processing-lease) and
 [ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).
 

@@ -13,6 +13,8 @@ On a new empty application schema, apply in order:
 
 1. [`001_email_queue.sql`](../schema/mysql/001_email_queue.sql)
 2. [`002_email_enqueue_receipts.sql`](../schema/mysql/002_email_enqueue_receipts.sql)
+3. [`005_email_queue_claim_index.sql`](../schema/mysql/005_email_queue_claim_index.sql) (Unreleased; the
+   worker's claim index, see [claim index](#worker-claim-index-unreleased))
 
 **Do not apply 003 after fresh 001.** Fresh001 already includes the nullable immutable binding and
 unique index. The SQL stores raw cipher/IV/tag in binary columns; do not substitute text columns.
@@ -63,9 +65,20 @@ DB/PHP settings before letting it process existing keyed jobs. Do not run an aut
 that drops durable identities, and do not bulk reset `processing` rows. Investigate acceptance/SMTP
 ambiguity before an operator acts.
 
+## Worker claim index (Unreleased)
+
+Apply [`005_email_queue_claim_index.sql`](../schema/mysql/005_email_queue_claim_index.sql) **once** to
+every installation, fresh or existing, after its earlier files. It adds `idx_email_queue_claim (status,
+priority, id)` with `ALGORITHM=INPLACE, LOCK=NONE`, so the table stays readable and writable while the
+index is built. Like 003, it is not idempotent: if the index already exists, do not run it again.
+
+Without it the claim's locking read scans and locks the whole table, as 1.2.0 already does; with it the
+claim reads and locks only `pending` and `processing` rows. The worker works either way. Measured
+figures and what still waits are in the [worker book](book/worker.md#claim-index-and-locks).
+
 ## Worker processing lease (Unreleased)
 
-No SQL change is needed. The upgraded worker stamps and renews `updated_at` on `processing` rows and
+No other SQL change is needed. The upgraded worker stamps and renews `updated_at` on `processing` rows and
 claims a row again once it is older than the lease (default 300 seconds), as described in the
 [processing lease](book/worker.md#processing-lease). Before upgrading:
 
@@ -75,6 +88,8 @@ claims a row again once it is older than the lease (default 300 seconds), as des
 - Stop every older worker first. Older workers neither stamp nor renew the lease, so an upgraded worker
   may claim a row that an older one is still sending.
 - Pass a connection factory instead of a `PDO` instance so the worker can replace a closed connection.
+- Give the worker connections with autocommit enabled (the MySQL/MariaDB default). It now checks
+  `@@SESSION.autocommit` before its first claim and throws `UnexpectedValueException` when it is off.
 
 Rolling back to an older worker removes reconnects and the lease; rows left `processing` then need an
 operator decision again.
