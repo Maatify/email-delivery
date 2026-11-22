@@ -22,6 +22,7 @@ metadata, claim/commit a batch, obtain the keyed retry clock or persist an outco
 caller. Re-running a whole batch is not a universal recovery instruction.
 
 SMTP failure may be ambiguous even when the library schedules a retry. Keyed enqueue prevents a
-second accepted queue job for the request; it does not deduplicate SMTP attempts. No automatic
-recovery for a job left `processing` after interruption is implemented. Do not infer receipt/queue
-missing as sent, and do not create a new request key to conceal an unknown outcome.
+second accepted queue job for the request; it does not deduplicate SMTP attempts. A job left
+`processing` after interruption is claimed again once its [processing lease](worker.md#processing-lease)
+expires: as a new attempt under the cap, or settled `failed` (`processing_lease_expired`) at the cap.
+Do not infer receipt/queue missing as sent, and do not create a new request key to conceal an unknown outcome.

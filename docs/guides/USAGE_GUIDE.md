@@ -9,7 +9,7 @@ keyed acceptance, Twig HTML rendering, SMTP transport or a separate inert record
 PHP/dependency requirements come from [composer.json](../../composer.json). SQL adapters require
 MySQL/MariaDB with PDO MySQL and package schema; applications configure crypto and connections.
 The library does not provide HTTP endpoints, business/account checks, a daemon, authorization,
-exactly-once SMTP, automatic recovery of interrupted `processing` jobs, or constant-time responses.
+exactly-once SMTP or constant-time responses.
 
 ## Capability map
 
@@ -56,10 +56,12 @@ and recover with the same key on a fresh connection. See [the detailed contract]
 
 ## Worker
 
-Input: a dedicated idle PDO, crypto/context provider, renderer, transport and PSR logger.
+Input: a connection factory (`workerConnectionFactory()`), crypto/context provider, renderer, transport,
+PSR logger and an optional processing lease (default 300 seconds).
 Public call: `createWorker()` constructs `EmailQueueWorker`; `runOneWorkerBatch()` calls `processBatch()`.
-Result: the worker claims and attempts due jobs, then records success/failure/retry. Boundary: claiming
-commits before the external SMTP effect; the host owns supervision and interrupted-job investigation.
+Result: the worker claims due jobs and expired `processing` leases, attempts them, then records
+success/failure/retry. With a factory it replaces a connection the server closed. Boundary: claiming
+commits before the external SMTP effect; delivery is at-least-once, and the host owns supervision.
 Use a fake transport in tests; no repository example automatically sends email. See [worker operation](../how-to/setup-worker.md).
 
 ## Rendering

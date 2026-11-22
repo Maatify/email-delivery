@@ -346,6 +346,8 @@ class EmailQueueWorkerIntegrationTest extends TestCase
     public function testQueueLockingSafety(): void
     {
         $realPdoMock = $this->createMock(PDO::class);
+        // A plain PDO must be in exception error mode; the mock reports no driver, so no autocommit query runs.
+        $realPdoMock->method('getAttribute')->willReturnCallback(static fn (int $attribute): ?int => $attribute === PDO::ATTR_ERRMODE ? PDO::ERRMODE_EXCEPTION : null);
         $realPdoMock->expects($this->once())
             ->method('beginTransaction');
 
@@ -358,9 +360,11 @@ class EmailQueueWorkerIntegrationTest extends TestCase
         $stmtMock = $this->createMock(\PDOStatement::class);
         $stmtMock->method('fetchAll')->willReturn([]);
 
-        $realPdoMock->expects($this->once())
+        // Two ordered unlocked candidate reads, expired leases and due pending rows. There are no candidates
+        // here, so the primary-key locking read does not follow.
+        $realPdoMock->expects($this->exactly(2))
             ->method('prepare')
-            ->with($this->stringContains('FOR UPDATE'))
+            ->with($this->stringContains('ORDER BY priority ASC, id ASC'))
             ->willReturn($stmtMock);
 
         $realPdoMock->expects($this->once())

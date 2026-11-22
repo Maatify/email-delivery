@@ -51,8 +51,9 @@ repository records later publication facts; it does not replace the tag or chang
 | Observe an accepted keyed request | `EmailEnqueueReceiptReaderInterface::find(namespace, key)` | Scoped receipt or `null`; no recipient/context returned |
 
 Keyed enqueue atomically stores a job and its durable receipt. Repeating the same namespace/key and
-logical content returns the same receipt/job identity. It does **not** guarantee exactly-once SMTP,
-mailbox arrival, or automatic recovery of a worker interrupted after claiming a job.
+logical content returns the same receipt/job identity. It does **not** guarantee exactly-once SMTP or
+mailbox arrival. A job whose worker was interrupted after claiming it is claimed again once its
+processing lease expires, so it may be sent twice (at-least-once).
 
 ## Public Runtime API
 
@@ -77,7 +78,8 @@ composer require maatify/email-delivery:1.2.0
 This exact version is available through Packagist. To follow the current Stable line, use
 `composer require maatify/email-delivery`.
 
-The package requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer and PSR-3 logging.
+The package requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer, PSR-3 logging and
+`symfony/polyfill-mbstring` (`mb_strcut` without the mbstring extension).
 The production keyed and synthetic storage paths use MySQL/MariaDB with `pdo_mysql` and the package-owned
 [SQL files](schema/mysql). SQLite is used by legacy tests, not supported as keyed production storage.
 Supply your application PDO, crypto provider/context provider, renderer, transport and logger through DI.
@@ -85,6 +87,8 @@ Monolog is not a package dependency.
 
 Apply the [schema installation/upgrade](docs/upgrade.md) before adopting the keyed API. Do not run
 all numbered SQL files on a fresh installation: the binding upgrade is for an existing legacy table.
+The worker's claim index (`005`, Unreleased): fresh installs run 001, 002, then 005; legacy tables run
+002, 003, then 005; 1.2.0 installs that already applied 002 and 003 run only 005.
 
 Synthetic recording uses an optional independent table and separate crypto domains. Its retention is
 explicitly configured by the consumer; cleanup is scheduled externally. It provides no constant-time or
@@ -131,6 +135,14 @@ indefinite receipt/key retention and recovery with the same key on a fresh conne
 `EmailQueueWorker::processBatch()` claims a bounded pending batch under row locks, commits the claim,
 then decrypts/renders and calls the transport outside that transaction. Run it from your application's
 supervised process using the [worker guide](docs/how-to/setup-worker.md).
+
+Unreleased (after 1.2.0): construct the worker with a connection factory, `Closure(): PDO`, so it can
+replace a connection the server closed while a send was running. A `processing` row whose lease
+expires (default 300 seconds, configurable) is claimed again; delivery is at-least-once. Worker connections
+need exception error mode and autocommit enabled, and the claim index `005` keeps the claim's reads from
+scanning the whole table. See the
+[processing lease](docs/book/worker.md#processing-lease) and
+[ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).
 
 Keyed jobs use database UTC for due/retry selection, retry deadlines and `sent_at`. NULL-token legacy
 jobs retain local database `NOW()` and PHP-local retry calculation. The worker supports pre-binding

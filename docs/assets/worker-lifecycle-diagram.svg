@@ -26,8 +26,8 @@
   <text class="sub" x="480.0" y="300">External work starts after commit</text>
   <rect class="warn" x="40" y="230" width="235" height="100" rx="7" />
   <text class="label" x="157.5" y="254">Interruption here</text>
-  <text class="sub" x="157.5" y="274">May leave processing indefinitely</text>
-  <text class="sub" x="157.5" y="290">No automatic reclaim/reset</text>
+  <text class="sub" x="157.5" y="274">Row stays processing until its lease</text>
+  <text class="sub" x="157.5" y="290">Then claimed again (at-least-once)</text>
   <path class="note" d="M325 275 L275 275" />
   <path class="arrow" d="M480 310 L480 350" />
   <rect class="node" x="325" y="350" width="310" height="70" rx="7" />

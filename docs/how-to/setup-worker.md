@@ -3,18 +3,27 @@
 [Guides](README.md) · [Lifecycle and clocks](../book/worker.md) · [Typed composition](../examples/worker-runner.php)
 
 `EmailQueueWorker` processes one batch when the application calls `processBatch()`. There is no
-bundled daemon/bootstrap script. Your DI container supplies PDO, crypto/context provider, renderer,
-transport and a PSR-3 logger; Monolog is not required. The [example](../examples/worker-runner.php)
+bundled daemon/bootstrap script. Your DI container supplies a connection factory, crypto/context
+provider, renderer, transport and a PSR-3 logger; Monolog is not required. The [example](../examples/worker-runner.php)
 defines dependency-taking functions and does nothing at include time.
 
 ## Application bootstrap
 
-1. Apply the correct [fresh/upgrade SQL](../upgrade.md) before keyed callers run.
-2. Build a dedicated idle PDO with exception mode. Do not wrap the worker in another transaction.
+1. Apply the correct [fresh/upgrade SQL](../upgrade.md) before keyed callers run, including the worker's
+   claim index `005`.
+2. Pass a connection factory, a `Closure(): PDO` that opens a new dedicated exception-mode connection
+   with autocommit enabled (the MySQL/MariaDB default) and applies your session settings each time it is
+   called. The worker rejects a connection without autocommit, or not in exception error mode, before
+   claiming anything. The worker calls it on first use and again only after the server closed its
+   connection. A `PDO` instance is still accepted, in exception error mode and with autocommit enabled
+   (both checked before every claim), but then the worker cannot reconnect. Do not wrap the worker in another transaction.
 3. Supply read keys for queued payloads/recipients and stable contexts, plus trusted template root/globals.
 4. Construct the transport with [explicit SMTP encryption](configure-smtp.md) and restricted diagnostics.
-5. Call `processBatch(50)` from your application's supervised process. Select batch size/polling/supervision
-   in the application; those are not new package settings or automatic recovery mechanisms.
+5. Optionally pass `processingLeaseSeconds` (default 300): how long a claimed row may stay `processing`
+   without renewal before a later batch claims it again. Nothing bounds one render and send; size the
+   lease as the [worker book](../book/worker.md#processing-lease) describes.
+6. Call `processBatch(50)` from your application's supervised process. Select batch size/polling/supervision
+   in the application.
 
 Keyed worker comparisons, retry deadlines and sent timestamps are database UTC even when its session
 is local. NULL-token/pre-003 legacy work keeps its existing local clock behavior. The worker discovers
@@ -23,11 +32,18 @@ metadata reads fail. See the [clock table](../book/worker.md#clock-domains).
 
 ## Supervision and errors
 
-Handle escaped batch/database failures in the application. Do not keep using a connection whose
-transaction state is unresolved, log raw credentials/payloads, or blindly continue an infinite loop on
-a broken connection. A process manager can restart your application entry point; it cannot infer whether
-an external SMTP send occurred or reset a queue row left `processing`.
+Handle escaped batch/database failures in the application. Do not log raw credentials/payloads, and do
+not loop forever on a broken connection: with a `PDO` instance the worker keeps the connection it was
+given, so rebuild the worker after a connection failure or pass a factory instead. With a factory, the
+worker replaces a connection the server closed before the next claim and retries single status writes
+once; a database that stays unreachable still makes `processBatch()` throw.
 
-No automatic reclaim/lease/recovery cron for `processing` is implemented. Investigate queue state,
-logs and external acceptance before an explicit operator recovery decision. The library's retry tables
-apply to handled row failures, not a guarantee that every crash or DB outage is automatically retried.
+When a `sent` status cannot be recorded, the worker logs `Email sent but status write failed`. Alert on
+that message: the row stays `processing` until its lease expires and is then claimed again, so that
+message may be sent twice. A retry/failed write that cannot be recorded is logged as `Email job failure
+was not recorded`. For both, a connection still lost after one reconnect is rethrown and stops the batch,
+and the batch's remaining claimed rows go out after their lease (300 seconds by default). Any other error
+leaves that row to its lease and the batch goes on.
+Rows interrupted before their send are recovered the same way; no separate recovery script is needed.
+See [processing lease](../book/worker.md#processing-lease) and
+[ADR-012](../ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).

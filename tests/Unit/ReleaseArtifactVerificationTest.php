@@ -44,6 +44,8 @@ final class ReleaseArtifactVerificationTest extends TestCase
         file_put_contents($this->directory . '/README.md', $readme);
         $changelog = (string) file_get_contents($this->directory . '/CHANGELOG.md');
         $changelog = str_replace('## [1.2.0] - 2026-11-06', '## [1.2.0]', $changelog);
+        // The 1.2.0 preparation state had nothing under Unreleased; entries added after publication are not part of it.
+        $changelog = (string) preg_replace('/^## \[Unreleased\]\n.*?(?=^<a id="120"><\/a>)/ms', "## [Unreleased]\n\n", $changelog);
         $changelog = preg_replace('/^\[1\.2\.0\]:.*\n/m', '', $changelog);
         file_put_contents($this->directory . '/CHANGELOG.md', $changelog);
         $security = (string) file_get_contents($this->directory . '/SECURITY.md');

@@ -11,8 +11,9 @@ receipt lookup. Both encrypt recipient and template context for the queue.
 
 An application-run worker claims due jobs, commits `processing`, decrypts/renders HTML and calls its
 transport. Normal row failures use fixed backoff tables; transaction/database failures may escape to
-the application supervisor. No built-in daemon, HTTP endpoint, receipt-retention pruner or interrupted
-`processing` reclaimer is supplied. Queue acceptance and SMTP/mailbox delivery are different facts.
+the application supervisor. Expired `processing` leases are claimed again (at-least-once). No built-in
+daemon, HTTP endpoint or receipt-retention pruner is supplied. Queue acceptance and SMTP/mailbox
+delivery are different facts.
 
 Start with [schema adoption](../upgrade.md), then [enqueue](../how-to/send-email.md) and
 [worker composition](../how-to/setup-worker.md). Release additions are listed under [1.2.0](../../CHANGELOG.md#120);

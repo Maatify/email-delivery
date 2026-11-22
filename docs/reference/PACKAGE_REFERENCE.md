@@ -3,7 +3,8 @@
 [Usage Guide](../guides/USAGE_GUIDE.md) · [Examples](../../examples/README.md) · [Schema adoption](../upgrade.md)
 
 This is the canonical supported public/runtime/behavioral reference and complete Public Runtime API
-inventory for this package. It describes the published **1.2.0** contract; [publication evidence](../releases/1.2.0-publication.md) is separate from this API reference.
+inventory for this package. It describes the published **1.2.0** contract plus the worker changes marked
+**Unreleased**; [publication evidence](../releases/1.2.0-publication.md) is separate from this API reference.
 Exact package/dependency/platform/autoload facts remain owned by [composer.json](../../composer.json).
 The specialized [keyed reference](idempotency.md) and [synthetic reference](synthetic-recording.md)
 are normative constituent chapters of this reference within their named scopes; their detailed rules
@@ -11,15 +12,16 @@ are linked rather than redefined here. Guides/examples explain use and do not cr
 
 ## Runtime requirements and boundaries
 
-PHP ^8.2, JSON and PDO are declared requirements. `maatify/crypto`, Twig, PHPMailer and PSR logging
-are production dependencies; inject instances rather than relying on a framework or environment loader.
+PHP ^8.2, JSON and PDO are declared requirements. `maatify/crypto`, Twig, PHPMailer, PSR logging and
+`symfony/polyfill-mbstring` are production dependencies; inject instances rather than relying on a framework or environment loader.
 SQL adapters use MySQL/MariaDB/PDO MySQL and package schema. SQLite appears only in legacy tests.
 The application owns email intent, authentication/authorization, PDO/keys, template files, SMTP policy,
 process supervision, log redaction, schema migration and synthetic cleanup scheduling.
 
-Queue acceptance does not establish SMTP/mailbox delivery, exactly-once external effects or recovery
-of interrupted `processing` jobs. Synthetic recording does not establish real acceptance, HTTP timing
-equivalence or complete prevention of account enumeration. There is no HTTP endpoint or built-in daemon.
+Queue acceptance does not establish SMTP/mailbox delivery or exactly-once external effects; the worker
+retries interrupted `processing` jobs at-least-once (Unreleased). Synthetic recording does not establish
+real acceptance, HTTP timing equivalence or complete prevention of account enumeration. There is no HTTP
+endpoint or built-in daemon.
 
 ## Legacy enqueue
 
@@ -86,9 +88,32 @@ increments attempts and marks processing under a transaction, commits, then decr
 It reads only the real queue. Receipt-bound rows use database UTC; NULL-token legacy and pre-binding
 tables retain their local clock behavior. No worker session timezone is silently changed.
 SMTP retry delays are 30/60/120 seconds; other failures use 60/300/900; attempt 4 permanently fails.
-The host owns supervision and investigation of interrupted/ambiguous delivery. Claim or persistence
-errors can escape; do not infer that every worker failure is swallowed. See [worker](../book/worker.md)
+The host owns supervision and investigation of ambiguous delivery. Claim or persistence errors can
+escape; do not infer that every worker failure is swallowed. See [worker](../book/worker.md)
 and [retry behavior](../book/retry-mechanism.md).
+
+**Unreleased.** The first constructor argument is `PDO|Closure(): PDO`. A factory must return a new
+exception-mode connection, and a `PDO` instance must be in exception error mode too (checked before every
+claim). On MySQL/MariaDB every worker connection must have autocommit enabled (a `PDO` instance is
+checked before every claim, a factory connection when created). A connection that fails
+either check is rejected with `UnexpectedValueException` before any claim, and the worker never changes
+the setting. The factory is called on first use and only again after the server closed the
+connection, which the worker replaces before the claim transaction and once around each single status
+statement (driver errors 2006, 2013, 4031). The claim transaction is never retried. A `PDO` instance
+cannot reconnect. The optional `processingLeaseSeconds` (default `DEFAULT_PROCESSING_LEASE_SECONDS`, 300,
+minimum 1) is how long a `processing` row may go without renewal: the claim stamps `updated_at` and each
+row renews it before its send. On a `DATETIME` column each row keeps its own clock. On a `TIMESTAMP`
+column (detected per batch) the lease is compared as instants and stamped exactly. An expired row under the attempt cap is claimed and
+sent again; at the cap it is settled `failed` with `processing_lease_expired`. The claim reads through
+`idx_email_queue_claim` from schema 005; without it the claim's candidate reads scan the table. Either way it
+locks only its candidates, by primary key. A repeat after a lost
+acknowledgement keeps the first `sent_at` and `retry_after`. Retry/failed writes are
+fenced by attempt; the `sent` write is not. A failed `sent` write never writes pending/failed: it is
+logged (`Email sent but status write failed`) and the row is left to its lease. For every outcome write,
+a connection still lost after one reconnect is rethrown and stops the batch; other errors, such as a lock
+wait, leave the row to its lease and the batch continues with the next row.
+Delivery is at-least-once. See
+[ADR-012](../ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).
 
 ## Exceptions
 
@@ -511,14 +536,15 @@ public function send(
 ### `Maatify\EmailDelivery\Worker\EmailQueueWorker`
 
 ```text
-final readonly class EmailQueueWorker
+final class EmailQueueWorker
 public function __construct(
-    PDO $pdo,
+    PDO|Closure $pdo,
     Maatify\Crypto\DX\CryptoProvider $cryptoProvider,
     Maatify\EmailDelivery\Renderer\EmailRendererInterface $renderer,
     Maatify\EmailDelivery\Transport\EmailTransportInterface $transport,
     Maatify\Crypto\Contract\CryptoContextProviderInterface $cryptoContextProvider,
     Psr\Log\LoggerInterface $logger,
+    int $processingLeaseSeconds = 300,
 );
 public function processBatch(
     int $limit = 50,

@@ -26,4 +26,4 @@ not a caller authorization or a delivery guarantee.
 
 A successful enqueue means queue storage/acceptance. A separately [run worker](setup-worker.md)
 attempts delivery. Inspect scoped receipt state for keyed work, respecting `queue_missing` and the
-absence of automatic interrupted-processing recovery; do not present acceptance as mailbox delivery.
+worker's at-least-once processing lease; do not present acceptance as mailbox delivery.
