@@ -222,6 +222,29 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame([], $this->logger->contexts('error', 'Email job failed'), 'A failed status write is not a send failure.');
     }
 
+    public function testASentWriteWhoseReconnectFailsStopsTheBatch(): void
+    {
+        $first = $this->enqueue('key-1');
+        $second = $this->enqueue('key-2');
+        $factory = $this->factory();
+        $worker = $this->worker(function () use ($factory): PDO {
+            if ($this->connections === []) {
+                return $factory();
+            }
+            // The database is still unreachable: a real refused connection, not a fixture exception.
+            return new PDO('mysql:host=127.0.0.1;port=1;dbname=unreachable_test', 'fixture', 'fixture', [PDO::ATTR_TIMEOUT => 2]);
+        });
+        $this->transport->duringSend = fn (int $call) => $this->closeWorkerConnection();
+
+        $error = $this->errorOf(static fn () => $worker->processBatch());
+
+        self::assertNotNull($error);
+        self::assertStringStartsWith(PDOException::class . ': SQLSTATE[HY000] [2002]', $error);
+        self::assertSame(1, $this->transport->calls, 'No further mail may be sent while the database is unreachable.');
+        self::assertSame(['processing', 'processing'], [$this->row($first)['status'], $this->row($second)['status']]);
+        self::assertSame(true, $this->logger->contexts('error', self::SENT_UNRECORDED)[0]['connection_lost'] ?? null);
+    }
+
     public function testWithoutAFactoryALostConnectionOnTheSentWriteStopsTheBatch(): void
     {
         $first = $this->enqueue('key-1');
