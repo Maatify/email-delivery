@@ -64,6 +64,11 @@ The lease clock follows the type of `updated_at`, read from the column metadata 
   - **Older MySQL:** before 8.0.19 the stamp is `NOW()`. In a session zone with daylight saving, a row
     stamped in that repeated hour can then look one hour older and be claimed early; use a fixed-offset
     or UTC session zone there.
+  - **Engine detection:** the stamp is chosen from the server version the connection reports, so that
+    version must identify the real engine. Behind a proxy that reports a MySQL 8.0.19+ version in front
+    of MariaDB, the worker uses the offset form, which MariaDB cannot store. Under strict SQL mode every
+    claim of a `TIMESTAMP` table then fails with error 1292; without it, the stamp loses its offset and
+    the lease moves by the session zone's offset.
   - **Legacy `DATETIME` rows** keep their documented local-clock contract, so a daylight saving jump in
     the session zone moves their lease exactly as it moves their due times.
 

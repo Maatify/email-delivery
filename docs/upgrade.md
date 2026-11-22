@@ -99,7 +99,8 @@ works either way. Measured figures and what still waits are in the
 CURRENT_TIMESTAMP`) is supported. The worker detects the type in every batch, compares the lease as
 instants and stamps it exactly, including across daylight saving changes; see the
 [worker book](book/worker.md#processing-lease). On MySQL older than 8.0.19, use a fixed-offset or UTC
-session zone for the worker.
+session zone for the worker. The worker tells MySQL from MariaDB by the server version the connection
+reports, so a proxy in front of MariaDB must not report a MySQL version.
 
 ## Worker processing lease (Unreleased)
 

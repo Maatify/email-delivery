@@ -227,6 +227,48 @@ final class EmailQueueWorkerConnectionContractTest extends TestCase
         self::assertSame([[E_USER_WARNING, 'fixture: Packets out of order']], $outer);
     }
 
+    /** @return iterable<string, array{string, string}> */
+    public static function reportedServerVersions(): iterable
+    {
+        $offset = "CONCAT(UTC_TIMESTAMP(), '+00:00')";
+        // MariaDB rejects a value with an offset (1292) under strict SQL mode and drops the offset without it,
+        // so every MariaDB version string must select a directly assigned NOW().
+        yield 'MariaDB 11.4' => ['11.4.13-MariaDB-ubu2404', 'NOW()'];
+        yield 'MariaDB 10.11' => ['10.11.6-MariaDB-0+deb12u1', 'NOW()'];
+        yield 'MariaDB with the replication prefix' => ['5.5.5-10.6.16-MariaDB', 'NOW()'];
+        yield 'MariaDB in lower case' => ['11.4.13-mariadb', 'NOW()'];
+        yield 'MySQL 8.0.46' => ['8.0.46', $offset];
+        yield 'MySQL 8.0.19, the first with offsets' => ['8.0.19', $offset];
+        yield 'MySQL 8.0.18' => ['8.0.18', 'NOW()'];
+        yield 'MySQL 8.4 LTS' => ['8.4.3', $offset];
+        yield 'MySQL 9' => ['9.1.0', $offset];
+        yield 'MySQL-compatible build suffix' => ['8.0.36-28', $offset];
+        yield 'MySQL 5.7 with a suffix' => ['5.7.44-log', 'NOW()'];
+        yield 'no version reported' => ['', 'NOW()'];
+    }
+
+    /**
+     * The TIMESTAMP lease stamp is chosen from the server version the connection reports. A proxy that reports
+     * a MySQL 8.0.19+ version in front of MariaDB would select the offset form, which MariaDB cannot store.
+     */
+    #[DataProvider('reportedServerVersions')]
+    public function testTheTimestampLeaseStampIsChosenFromTheReportedServerVersion(string $serverVersion, string $stamp): void
+    {
+        $pdo = new class ($serverVersion) extends PDO {
+            public function __construct(private readonly string $serverVersion)
+            {
+                parent::__construct('sqlite::memory:');
+            }
+
+            public function getAttribute(int $attribute): mixed
+            {
+                return $attribute === PDO::ATTR_SERVER_VERSION ? $this->serverVersion : parent::getAttribute($attribute);
+            }
+        };
+
+        self::assertSame($stamp, (new \ReflectionMethod(EmailQueueWorker::class, 'instantStamp'))->invoke(null, $pdo));
+    }
+
     /** @param \Closure(): mixed $operation */
     private static function onPossiblyClosedConnection(\Closure $operation): mixed
     {

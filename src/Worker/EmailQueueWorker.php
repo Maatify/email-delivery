@@ -718,7 +718,8 @@ final class EmailQueueWorker
      * time is ambiguous in the repeated hour after a daylight saving fall-back: there, MySQL stores a local
      * NOW() as the earlier of the two instants (one hour early), while MariaDB stores a directly assigned
      * NOW() exactly. MySQL 8.0.19+ stores a UTC value with an explicit offset exactly. Read from the
-     * connection attributes, without a query.
+     * connection attributes, without a query, so the reported server version must identify the real engine:
+     * MariaDB rejects the offset form under strict SQL mode (1292) and otherwise stores it without its offset.
      */
     private static function instantStamp(PDO $pdo): string
     {
