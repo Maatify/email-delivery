@@ -612,6 +612,12 @@ final class EmailQueueWorker
             return $this->reconnect();
         }
         if ($this->connectionFactory === null) {
+            // Under ERRMODE_SILENT or ERRMODE_WARNING a failed statement only returns false, so a status write
+            // or a lease renewal could fail unnoticed after a send. The application owns this PDO and can change
+            // its error mode between batches, so the attribute is read before every claim (no query).
+            if ($this->connection->getAttribute(PDO::ATTR_ERRMODE) !== PDO::ERRMODE_EXCEPTION) {
+                throw new UnexpectedValueException('The email queue worker requires a PDO in exception error mode (PDO::ERRMODE_EXCEPTION).');
+            }
             if ($this->autocommitConfirmed !== $this->connection) {
                 self::requireAutocommit($this->connection);
                 $this->autocommitConfirmed = $this->connection;

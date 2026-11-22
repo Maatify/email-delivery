@@ -227,6 +227,30 @@ final class EmailQueueWorkerConnectionContractTest extends TestCase
         self::assertSame([[E_USER_WARNING, 'fixture: Packets out of order']], $outer);
     }
 
+    /** @return iterable<string, array{int}> */
+    public static function nonExceptionErrorModes(): iterable
+    {
+        yield 'ERRMODE_SILENT' => [PDO::ERRMODE_SILENT];
+        yield 'ERRMODE_WARNING' => [PDO::ERRMODE_WARNING];
+    }
+
+    /** Like a factory connection, a plain PDO must report failures by exception; checked before any claim. */
+    #[DataProvider('nonExceptionErrorModes')]
+    public function testAPlainConnectionMustBeInExceptionErrorMode(int $mode): void
+    {
+        $pdo = new PDO('sqlite::memory:');
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, $mode);
+
+        try {
+            $this->worker($pdo)->processBatch();
+            self::fail('A plain PDO outside exception error mode was accepted.');
+        } catch (UnexpectedValueException $refused) {
+            self::assertStringContainsString('exception error mode', $refused->getMessage());
+        }
+        self::assertFalse($pdo->inTransaction(), 'Rejected before the claim transaction began.');
+        self::assertSame($mode, $pdo->getAttribute(PDO::ATTR_ERRMODE), 'The worker never changes the application\'s error mode.');
+    }
+
     /** @return iterable<string, array{string, string}> */
     public static function reportedServerVersions(): iterable
     {

@@ -1161,6 +1161,64 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame(['pending', '0'], [$this->row($job)['status'], $this->row($job)['attempts']]);
     }
 
+    // ── owner review N2: a candidate that changed before the lock ──
+
+    /** @return iterable<string, array{string}> */
+    public static function candidateChanges(): iterable
+    {
+        yield 'expired lease renewed by its owner' => ['renewed'];
+        yield 'due row rescheduled by the application' => ['rescheduled'];
+    }
+
+    /**
+     * Only candidates are ever locked, but a candidate can change between the unlocked read and the lock. It
+     * then fails the re-check: not claimed, not sent, and under REPEATABLE READ (the server default) locked
+     * only until the claim transaction ends, which is before any send.
+     */
+    #[DataProvider('candidateChanges')]
+    public function testACandidateThatChangedBeforeTheLockIsLockedOnlyUntilTheClaimEnds(string $change): void
+    {
+        $job = $this->enqueue('key-1');
+        if ($change === 'renewed') {
+            $this->stale($job, 1, gmdate('Y-m-d H:i:s', time() - 3600));
+        }
+        $connection = new EmailQueueFaultPdo();
+        $observed = ['changed' => false, 'write during the claim' => null];
+        $connection->afterExecuteHook = function (string $sql) use ($job, $change, &$observed): void {
+            $candidateRead = str_starts_with(ltrim($sql), 'SELECT id FROM')
+                && str_contains($sql, $change === 'renewed' ? "status = 'processing'" : "status = 'pending'");
+            if ($candidateRead && !$observed['changed']) {
+                // Between the unlocked candidate read and the lock.
+                $observed['changed'] = true;
+                $this->pdo->exec($change === 'renewed'
+                    ? "UPDATE cd_email_queue SET updated_at = UTC_TIMESTAMP() WHERE id = $job"
+                    : "UPDATE cd_email_queue SET scheduled_at = UTC_TIMESTAMP() + INTERVAL 1 DAY WHERE id = $job");
+            }
+            if (str_contains($sql, 'FOR UPDATE')) {
+                // The claim transaction is still open: its owner (or the application) writes the row.
+                $other = self::connection();
+                $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
+                try {
+                    $other->exec("UPDATE cd_email_queue SET last_error = 'write during the claim' WHERE id = $job");
+                    $observed['write during the claim'] = 'no wait';
+                } catch (PDOException $waited) {
+                    $observed['write during the claim'] = (string) ($waited->errorInfo[1] ?? '?');
+                }
+            }
+        };
+
+        $this->worker($connection)->processBatch();
+
+        self::assertTrue($observed['changed']);
+        self::assertSame(0, $this->transport->calls, 'The changed candidate is neither claimed nor sent.');
+        self::assertSame('1205', $observed['write during the claim'], 'Under REPEATABLE READ the re-check keeps the row locked while the claim transaction is open.');
+        $after = self::connection();
+        $after->exec('SET SESSION innodb_lock_wait_timeout = 1');
+        $after->exec("UPDATE cd_email_queue SET last_error = 'write after the claim' WHERE id = $job");
+        self::assertSame('write after the claim', $this->row($job)['last_error'], 'The lock ends with the claim transaction.');
+        self::assertSame($change === 'renewed' ? ['processing', '1'] : ['pending', '0'], [$this->row($job)['status'], $this->row($job)['attempts']]);
+    }
+
     // ── owner review R1: rows that are not due yet are never locked ──
 
     /** @return iterable<string, array{string, int}> */
@@ -1293,6 +1351,67 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
             self::assertSame(['processing', '1'], [$this->row($id)['status'], $this->row($id)['attempts']]);
         }
         self::assertSame(5, $this->transport->calls);
+    }
+
+    // ── owner review N1: a plain PDO whose failures are silent ──
+
+    /**
+     * A statement that prepares fine and then fails when it runs: a trigger rejects the `sent` write. On a
+     * connection in ERRMODE_SILENT, execute() only returns false, so the worker must never get that far.
+     */
+    public function testAPlainSilentConnectionNeverReportsASentStatusItDidNotRecord(): void
+    {
+        $job = $this->enqueue('key-1');
+        $this->pdo->exec("CREATE TRIGGER cd_email_queue_sent_fault BEFORE UPDATE ON cd_email_queue FOR EACH ROW
+            BEGIN
+                IF NEW.status = 'sent' THEN
+                    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fixture fault on the sent write';
+                END IF;
+            END");
+        $silent = $this->rawConnection([PDO::ATTR_ERRMODE => PDO::ERRMODE_SILENT]);
+
+        $error = $this->errorOf(fn () => $this->worker($silent)->processBatch());
+
+        self::assertSame([], $this->logger->contexts('info', 'Email sent'), 'Never reported as sent while the sent write failed.');
+        self::assertSame(0, $this->transport->calls, 'Nothing is sent over a connection whose failures are silent.');
+        self::assertSame(['pending', '0'], [$this->row($job)['status'], $this->row($job)['attempts']], 'Nothing is claimed.');
+        self::assertStringContainsString('UnexpectedValueException: The email queue worker requires a PDO in exception error mode', (string) $error);
+    }
+
+    /** The same with the lease renewal: a send must never follow a renewal that did not happen. */
+    public function testAPlainSilentConnectionNeverSendsARowWhoseLeaseRenewalFailed(): void
+    {
+        $job = $this->enqueue('key-1');
+        $this->pdo->exec("CREATE TRIGGER cd_email_queue_renewal_fault BEFORE UPDATE ON cd_email_queue FOR EACH ROW
+            BEGIN
+                IF OLD.status = 'processing' AND NEW.status = 'processing' THEN
+                    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Fixture fault on the lease renewal';
+                END IF;
+            END");
+        $silent = $this->rawConnection([PDO::ATTR_ERRMODE => PDO::ERRMODE_SILENT]);
+
+        $error = $this->errorOf(fn () => $this->worker($silent)->processBatch());
+
+        self::assertSame(0, $this->transport->calls, 'No send after a lease renewal that failed.');
+        self::assertSame([], $this->logger->contexts('info', 'Email sent'));
+        self::assertSame(['pending', '0'], [$this->row($job)['status'], $this->row($job)['attempts']], 'Nothing is claimed.');
+        self::assertStringContainsString('UnexpectedValueException: The email queue worker requires a PDO in exception error mode', (string) $error);
+    }
+
+    /** The application owns a plain PDO and may change its error mode later; the next batch refuses it. */
+    public function testAPlainConnectionSwitchedToSilentModeIsRefusedBeforeTheNextClaim(): void
+    {
+        $plain = $this->rawConnection([]);
+        $worker = $this->worker($plain);
+        $worker->processBatch();
+        $job = $this->enqueue('key-1');
+        $plain->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT);
+
+        $error = $this->errorOf(static fn () => $worker->processBatch());
+
+        self::assertStringContainsString('UnexpectedValueException: The email queue worker requires a PDO in exception error mode', (string) $error);
+        self::assertSame(0, $this->transport->calls);
+        self::assertSame(['pending', '0'], [$this->row($job)['status'], $this->row($job)['attempts']]);
     }
 
     // ── lead review L2: a failure reason is cut on a character boundary ──
