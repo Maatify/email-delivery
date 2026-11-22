@@ -358,7 +358,8 @@ class EmailQueueWorkerIntegrationTest extends TestCase
         $stmtMock = $this->createMock(\PDOStatement::class);
         $stmtMock->method('fetchAll')->willReturn([]);
 
-        $realPdoMock->expects($this->once())
+        // Two locking reads: due pending rows, then processing rows whose lease expired.
+        $realPdoMock->expects($this->exactly(2))
             ->method('prepare')
             ->with($this->stringContains('FOR UPDATE'))
             ->willReturn($stmtMock);

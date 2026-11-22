@@ -653,9 +653,10 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
 
     // ── claim plan and locks (review point 2) ─────────────────────
 
-    public function testTheClaimUsesTheClaimIndexAndLeavesFinishedRowsWritable(): void
+    public function testTheClaimReadsInIndexOrderLocksAboutABatchAndLeavesFinishedRowsWritable(): void
     {
         $this->seedFinishedRows();
+        $this->seedDuePendingRows(300);
         $due = $this->enqueue('key-1');
         $finished = (int) self::scalar($this->pdo, "SELECT MAX(id) FROM cd_email_queue WHERE status = 'sent'");
         $analyze = $this->pdo->query('ANALYZE TABLE cd_email_queue');
@@ -663,18 +664,18 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         $analyze->fetchAll();
         $connection = new EmailQueueFaultPdo();
         $workerThread = (int) self::scalar($connection, 'SELECT CONNECTION_ID()');
+        $claimReads = [];
         $observed = [];
-        $connection->afterExecuteHook = function (string $sql) use (&$observed, $workerThread, $finished): void {
-            if ($observed !== [] || !str_contains($sql, 'FOR UPDATE')) {
+        $connection->afterExecuteHook = function (string $sql) use (&$claimReads, &$observed, $workerThread, $finished): void {
+            if (!str_contains($sql, 'FOR UPDATE')) {
                 return;
             }
-            // Inside the claim transaction, right after its locking read.
+            $claimReads[] = $sql;
+            // Inside the claim transaction, after each locking read (the last measurement covers them all).
             $other = self::connection();
             $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
-            $observed['sql'] = $sql;
             $observed['rows_locked'] = (int) self::scalar($other, "SELECT trx_rows_locked FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = $workerThread");
             $other->beginTransaction();
-            $start = microtime(true);
             try {
                 $other->exec("UPDATE cd_email_queue SET updated_at = updated_at WHERE id = $finished");
                 $observed['finished_row_write'] = 'no wait';
@@ -683,21 +684,26 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
             } finally {
                 $other->rollBack();
             }
-            $observed['finished_row_write_ms'] = (microtime(true) - $start) * 1000;
         };
 
-        $this->worker($connection)->processBatch();
+        $this->worker($connection)->processBatch(10);
 
-        self::assertSame('sent', $this->row($due)['status']);
+        self::assertSame('sent', $this->row($due)['status'], 'The highest-priority row was claimed first.');
         self::assertSame('no wait', $observed['finished_row_write'] ?? null, 'A finished row stays writable while the claim runs.');
-        self::assertLessThan(50, $observed['rows_locked'] ?? PHP_INT_MAX, 'The claim locks the active rows, not the table.');
-        $plan = $this->pdo->prepare('EXPLAIN ' . str_replace('FOR UPDATE', '', (string) ($observed['sql'] ?? '')));
-        $plan->bindValue(':lease', EmailQueueWorker::DEFAULT_PROCESSING_LEASE_SECONDS, PDO::PARAM_INT);
-        $plan->bindValue(':limit', 50, PDO::PARAM_INT);
-        $plan->execute();
-        /** @var array{type: string, key: string|null} $row */
-        $row = $plan->fetch(PDO::FETCH_ASSOC);
-        self::assertSame(['range', 'idx_email_queue_claim'], [$row['type'], $row['key']]);
+        self::assertLessThan(100, $observed['rows_locked'] ?? PHP_INT_MAX, 'With 301 due rows, the claim locks about a batch, not every due row.');
+        foreach ($claimReads as $sql) {
+            $plan = $this->pdo->prepare('EXPLAIN ' . str_replace('FOR UPDATE', '', $sql));
+            $plan->bindValue(':limit', 10, PDO::PARAM_INT);
+            if (str_contains($sql, ':lease')) {
+                $plan->bindValue(':lease', EmailQueueWorker::DEFAULT_PROCESSING_LEASE_SECONDS, PDO::PARAM_INT);
+            }
+            $plan->execute();
+            /** @var array{type: string, key: string|null, Extra: string|null} $row */
+            $row = $plan->fetch(PDO::FETCH_ASSOC);
+            self::assertSame('idx_email_queue_claim', $row['key'], $sql);
+            self::assertStringNotContainsString('filesort', (string) $row['Extra'], 'Read in index order, stopping at the limit.');
+        }
+        self::assertCount(2, $claimReads, 'One locking read per status.');
     }
 
     // ── lost acknowledgement after a 2013 (review point 3) ────────
@@ -770,6 +776,94 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame('2030-01-01 12:01:40', $this->scalarOrNull("SELECT updated_at FROM cd_email_queue WHERE id = $job"), 'The repeated renewal moved the lease forward.');
     }
 
+    // ── a TIMESTAMP updated_at (application-owned schemas) ────────
+
+    /** @return iterable<string, array{string, string}> */
+    public static function sessionZonePairs(): iterable
+    {
+        yield 'both +03:00' => ['+03:00', '+03:00'];
+        yield 'both -05:00' => ['-05:00', '-05:00'];
+        yield 'claimed in +03:00, checked in -05:00' => ['+03:00', '-05:00'];
+        yield 'claimed in -05:00, checked in +03:00' => ['-05:00', '+03:00'];
+    }
+
+    #[DataProvider('sessionZonePairs')]
+    public function testOnATimestampLeaseColumnAFreshlyClaimedRowIsNeverReclaimedFromAnotherSessionZone(string $claimZone, string $otherZone): void
+    {
+        $this->useTimestampLeaseColumn();
+        $rows = [$this->enqueue('key-1'), $this->enqueue('key-2'), $this->legacy()];
+        $other = $this->worker($this->zoned($otherZone));
+        $this->transport->duringSend = static function (int $call) use ($other): void {
+            if ($call === 1) {
+                // The first row was just renewed; the others were only stamped by the claim.
+                $other->processBatch();
+            }
+        };
+
+        $this->worker($this->zoned($claimZone))->processBatch();
+
+        self::assertSame(3, $this->transport->calls, 'Only the claiming worker sends.');
+        foreach ($rows as $id) {
+            self::assertSame(['sent', '1'], [$this->row($id)['status'], $this->row($id)['attempts']]);
+        }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function sessionZones(): iterable
+    {
+        yield '+03:00' => ['+03:00'];
+        yield '-05:00' => ['-05:00'];
+        yield '+00:00' => ['+00:00'];
+    }
+
+    #[DataProvider('sessionZones')]
+    public function testOnATimestampLeaseColumnALeaseExpiresExactlyAtItsBoundaryInAnySessionZone(string $zone): void
+    {
+        $this->useTimestampLeaseColumn();
+        $epoch = (new DateTimeImmutable(self::NOW))->getTimestamp();
+        // Written through the +00:00 fixture connection, so each value is the instant it names.
+        $instant = static fn (int $secondsAgo): string => gmdate('Y-m-d H:i:s', $epoch - $secondsAgo);
+        $rows = [
+            'keyed_expired' => $this->stale($this->enqueue('key-1'), 1, $instant(61)),
+            'keyed_at_lease' => $this->stale($this->enqueue('key-2'), 1, $instant(60)),
+            'legacy_expired' => $this->stale($this->legacy(), 1, $instant(61)),
+            'legacy_at_lease' => $this->stale($this->legacy(), 1, $instant(60)),
+        ];
+
+        $this->worker($this->zoned($zone, $epoch), 60)->processBatch();
+
+        $observed = [];
+        foreach ($rows as $name => $id) {
+            $observed[$name] = [$this->row($id)['status'], $this->row($id)['attempts']];
+        }
+        self::assertSame([
+            'keyed_expired' => ['sent', '2'],
+            'keyed_at_lease' => ['processing', '1'],
+            'legacy_expired' => ['sent', '2'],
+            'legacy_at_lease' => ['processing', '1'],
+        ], $observed);
+    }
+
+    #[DataProvider('sessionZones')]
+    public function testOnATimestampLeaseColumnARowClaimedByAnOlderWorkerIsJudgedByItsDatabaseStamp(string $zone): void
+    {
+        $this->useTimestampLeaseColumn();
+        $epoch = (new DateTimeImmutable(self::NOW))->getTimestamp();
+        $fresh = $this->enqueue('key-1');
+        $old = $this->enqueue('key-2');
+        // A 1.2.0 worker's claim sets only status and attempts; ON UPDATE CURRENT_TIMESTAMP stamps the instant.
+        $older = $this->zoned('+03:00', $epoch - 10);
+        $older->exec("UPDATE cd_email_queue SET status = 'processing', attempts = attempts + 1 WHERE id = $fresh");
+        $older->exec('SET timestamp=' . ($epoch - 400));
+        $older->exec("UPDATE cd_email_queue SET status = 'processing', attempts = attempts + 1 WHERE id = $old");
+
+        $this->worker($this->zoned($zone, $epoch))->processBatch();
+
+        self::assertSame(['processing', '1'], [$this->row($fresh)['status'], $this->row($fresh)['attempts']], 'Claimed 10 seconds ago: still leased.');
+        self::assertSame(['sent', '2'], [$this->row($old)['status'], $this->row($old)['attempts']], 'Claimed 400 seconds ago: reclaimed.');
+        self::assertSame(1, $this->transport->calls);
+    }
+
     // ── fixture helpers ───────────────────────────────────────────
 
     /** A real connection whose first `sent` write fails with the given driver code. */
@@ -810,6 +904,23 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         return $row;
     }
 
+    /** The column type some application schemas use: TIMESTAMP stores instants and converts by session zone. */
+    private function useTimestampLeaseColumn(): void
+    {
+        $this->pdo->exec('ALTER TABLE cd_email_queue MODIFY updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+    }
+
+    /** A connection in the given session zone, optionally with its clock frozen. */
+    private function zoned(string $zone, ?int $epoch = null): PDO
+    {
+        $pdo = $this->rawConnection([]);
+        $this->freeze($pdo, $epoch ?? time(), $zone);
+        if ($epoch === null) {
+            $pdo->exec('SET timestamp = DEFAULT');
+        }
+        return $pdo;
+    }
+
     /** @param array<int, mixed> $options */
     private function rawConnection(array $options): PDO
     {
@@ -846,6 +957,22 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
             $this->connections[] = $pdo;
             return $pdo;
         };
+    }
+
+    /** Due legacy rows at the lowest priority (9), so a priority-5 row sorts before them. */
+    private function seedDuePendingRows(int $count): void
+    {
+        $digits = '(SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4'
+            . ' UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9)';
+        $this->pdo->exec("
+            INSERT INTO cd_email_queue (recipient_encrypted, recipient_iv, recipient_tag, recipient_key_id, payload_encrypted,
+                payload_iv, payload_tag, payload_key_id, template_key, language, sender_type, priority, status, attempts,
+                last_error, scheduled_at, created_at, updated_at)
+            SELECT 'x', 'iv', 'tag', 'k', 'x', 'iv', 'tag', 'k', 'welcome', 'en', 1, 9, 'pending', 0, '',
+                '2000-01-01 00:00:00', UTC_TIMESTAMP(), UTC_TIMESTAMP()
+            FROM (SELECT a.d + 10 * b.d + 100 * c.d AS n FROM $digits a, $digits b, $digits c) seq
+            WHERE n < $count
+        ");
     }
 
     /** 9,000 sent and 1,000 failed rows, as in a long-running queue. */

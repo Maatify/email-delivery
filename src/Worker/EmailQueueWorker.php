@@ -27,6 +27,7 @@ use UnexpectedValueException;
  * @phpstan-type EmailQueueRow array{
  *   id: int|string,
  *   status: string,
+ *   priority: int|string,
  *   recipient_encrypted: string,
  *   recipient_iv: string,
  *   recipient_tag: string,
@@ -114,40 +115,57 @@ final class EmailQueueWorker
         try {
             $table = self::TABLE;
             // Discover inside this transaction: no cached capability and no session timezone mutation.
-            $hasBinding = $this->hasReceiptBinding($pdo);
+            $columns = $this->queueColumns($pdo);
+            $hasBinding = $columns['binding'];
             $bindingColumn = $hasBinding ? ', enqueue_receipt_id' : '';
-            // Each row keeps its own clock for due times and for its processing lease.
+            // Each row keeps its own clock for due times.
             $dueClock = $hasBinding
                 ? 'CASE WHEN enqueue_receipt_id IS NULL THEN NOW() ELSE UTC_TIMESTAMP() END'
                 : 'NOW()';
+            // The lease follows the column type. A DATETIME updated_at (the package schema) holds wall-clock
+            // values, so it keeps each row's own clock. A TIMESTAMP updated_at (some application schemas)
+            // stores instants and converts them by session zone, so it is stamped and compared with NOW()
+            // for every row: correct in any session zone and against ON UPDATE CURRENT_TIMESTAMP stamps.
+            $leaseClock = $columns['timestampLease'] ? 'NOW()' : $dueClock;
 
-            $stmt = $pdo->prepare("
+            // Two locking reads, one per status, each in (priority, id) order with the batch limit. With an
+            // index led by (status, priority, id) each one walks its status in order and stops at the limit,
+            // so it locks about a batch of rows. A single `pending OR processing` read would need a filesort
+            // over every active row and lock them all. Merging both results keeps the same first rows.
+            $select = "
                 SELECT
-                    id, status,
+                    id, status, priority,
                     recipient_encrypted, recipient_iv, recipient_tag, recipient_key_id,
                     payload_encrypted, payload_iv, payload_tag, payload_key_id,
                     attempts$bindingColumn
                 FROM `$table`
-                WHERE (
-                        status = 'pending'
-                        AND scheduled_at <= $dueClock
-                        AND (retry_after IS NULL OR retry_after <= $dueClock)
-                    )
-                   OR (
-                        status = 'processing'
-                        AND updated_at < DATE_SUB($dueClock, INTERVAL :lease SECOND)
-                    )
+                WHERE %s
                 ORDER BY priority ASC, id ASC
                 LIMIT :limit
                 FOR UPDATE
-            ");
+            ";
 
-            $stmt->bindValue(':lease', $this->processingLeaseSeconds, PDO::PARAM_INT);
-            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-            $stmt->execute();
-
+            $due = $pdo->prepare(sprintf($select, "status = 'pending'
+                  AND scheduled_at <= $dueClock
+                  AND (retry_after IS NULL OR retry_after <= $dueClock)"));
+            $due->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $due->execute();
             /** @var list<EmailQueueRow> $rows */
-            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $rows = $due->fetchAll(PDO::FETCH_ASSOC);
+
+            $stale = $pdo->prepare(sprintf($select, "status = 'processing'
+                  AND updated_at < DATE_SUB($leaseClock, INTERVAL :lease SECOND)"));
+            $stale->bindValue(':lease', $this->processingLeaseSeconds, PDO::PARAM_INT);
+            $stale->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stale->execute();
+            /** @var list<EmailQueueRow> $staleRows */
+            $staleRows = $stale->fetchAll(PDO::FETCH_ASSOC);
+
+            if ($staleRows !== []) {
+                $rows = array_merge($rows, $staleRows);
+                usort($rows, static fn (array $a, array $b): int => [(int) $a['priority'], (int) $a['id']] <=> [(int) $b['priority'], (int) $b['id']]);
+                $rows = array_slice($rows, 0, max(0, $limit));
+            }
 
             if ($rows === []) {
                 $pdo->commit();
@@ -171,7 +189,7 @@ final class EmailQueueWorker
                     UPDATE `$table`
                     SET status     = 'processing',
                         attempts   = attempts + 1,
-                        updated_at = $dueClock
+                        updated_at = $leaseClock
                     WHERE id IN ($placeholders)
                 ")->execute($ids);
             }
@@ -183,7 +201,7 @@ final class EmailQueueWorker
                     UPDATE `$table`
                     SET status     = 'failed',
                         last_error = 'processing_lease_expired',
-                        updated_at = $dueClock
+                        updated_at = $leaseClock
                     WHERE id IN ($placeholders)
                 ")->execute($expired);
             }
@@ -203,21 +221,22 @@ final class EmailQueueWorker
         }
 
         foreach ($claimed as $row) {
-            $this->processRow($row);
+            $this->processRow($row, $columns['timestampLease']);
         }
     }
 
     /**
      * @param EmailQueueRow $row
+     * @param bool $timestampLease the lease column is a TIMESTAMP, renewed with NOW() for every row
      */
-    private function processRow(array $row): void
+    private function processRow(array $row, bool $timestampLease): void
     {
         $id      = (int) $row['id'];
         $attempt = (int) $row['attempts'] + 1;
         $keyed   = isset($row['enqueue_receipt_id']);
         $clock   = $keyed ? 'UTC_TIMESTAMP()' : 'NOW()';
 
-        if (!$this->renewLease($id, $attempt, $clock)) {
+        if (!$this->renewLease($id, $attempt, $timestampLease ? 'NOW()' : $clock)) {
             $this->logger->warning('Email job skipped: the row is no longer processing under this attempt', [
                 'job_id'  => $id,
                 'attempt' => $attempt,
@@ -663,7 +682,12 @@ final class EmailQueueWorker
         return $row === false ? null : $row;
     }
 
-    private function hasReceiptBinding(PDO $pdo): bool
+    /**
+     * Column facts the batch depends on, read from result metadata.
+     *
+     * @return array{binding: bool, timestampLease: bool}
+     */
+    private function queueColumns(PDO $pdo): array
     {
         $table = self::TABLE;
         $statement = $pdo->query("SELECT * FROM `$table` LIMIT 0");
@@ -672,14 +696,17 @@ final class EmailQueueWorker
         }
         try {
             $hasBinding = false;
+            $timestampLease = false;
             for ($index = 0; $index < $statement->columnCount(); ++$index) {
                 $metadata = $statement->getColumnMeta($index);
                 if ($metadata === false) {
                     throw new \RuntimeException('Email queue column metadata is unavailable.');
                 }
                 $hasBinding = $hasBinding || $metadata['name'] === 'enqueue_receipt_id';
+                $timestampLease = $timestampLease
+                    || ($metadata['name'] === 'updated_at' && ($metadata['native_type'] ?? null) === 'TIMESTAMP');
             }
-            return $hasBinding;
+            return ['binding' => $hasBinding, 'timestampLease' => $timestampLease];
         } finally {
             $statement->closeCursor();
         }
