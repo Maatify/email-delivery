@@ -109,7 +109,8 @@ final class EmailQueueWorker
     }
 
     /**
-     * Processes one batch of the rows whose `entity_type` is exactly $entityType, for a worker dedicated to one
+     * Processes one batch of the rows whose `entity_type` is exactly $entityType (byte for byte: case, accents and
+     * trailing spaces count, whatever the column's collation), for a worker dedicated to one
      * kind of mail in a shared queue. Everything else is as processBatch(): the same claim, lease, fence, retry
      * rules and checks. The filter applies to both candidate reads (due `pending` rows and expired leases) and to
      * the primary-key locking read that re-checks them, so the batch never selects, locks, reclaims or settles a
@@ -159,8 +160,13 @@ final class EmailQueueWorker
                     attempts$bindingColumn";
 
             $duePredicate = "status = 'pending' AND scheduled_at <= $dueClock AND (retry_after IS NULL OR retry_after <= $dueClock)";
-            // A scoped batch narrows every read below, including the locking re-check, to one entity type.
-            $typeScope = $entityType === null ? '' : ' AND entity_type = :entity_type';
+            // A scoped batch narrows every read below, including the locking re-check, to exactly one entity type.
+            // The column's collation may ignore case, accents and trailing spaces (utf8mb4_unicode_ci does), so the
+            // collation equality, which an index on entity_type can serve, is followed by a byte comparison of the
+            // UTF-8 encodings: `admin` never takes `Admin`, `admín` or `admin `. CAST(... AS BINARY), not the
+            // deprecated BINARY operator; CONVERT makes it independent of the column's and the connection's charset.
+            $typeScope = $entityType === null ? '' : ' AND entity_type = :entity_type'
+                . ' AND CAST(CONVERT(entity_type USING utf8mb4) AS BINARY) = CAST(CONVERT(:entity_type_exact USING utf8mb4) AS BINARY)';
 
             // Candidates first, without locks: the ids of expired-lease rows and of due `pending` rows, each in
             // (priority, id) order with the batch limit. With an index led by (status, priority, id) each read
@@ -172,12 +178,14 @@ final class EmailQueueWorker
             $staleCandidates->bindValue(':limit', $limit, PDO::PARAM_INT);
             if ($entityType !== null) {
                 $staleCandidates->bindValue(':entity_type', $entityType);
+                $staleCandidates->bindValue(':entity_type_exact', $entityType);
             }
             $staleCandidates->execute();
             $dueCandidates = $pdo->prepare("SELECT id FROM `$table` WHERE $duePredicate$typeScope ORDER BY priority ASC, id ASC LIMIT :limit");
             $dueCandidates->bindValue(':limit', $limit, PDO::PARAM_INT);
             if ($entityType !== null) {
                 $dueCandidates->bindValue(':entity_type', $entityType);
+                $dueCandidates->bindValue(':entity_type_exact', $entityType);
             }
             $dueCandidates->execute();
             $candidateIds = array_values(array_unique(array_map('intval', [
@@ -209,6 +217,7 @@ final class EmailQueueWorker
                 $lock->bindValue(':lease', $this->processingLeaseSeconds, PDO::PARAM_INT);
                 if ($entityType !== null) {
                     $lock->bindValue(':entity_type', $entityType);
+                    $lock->bindValue(':entity_type_exact', $entityType);
                 }
                 $lock->execute();
                 /** @var list<EmailQueueRow> $rows */

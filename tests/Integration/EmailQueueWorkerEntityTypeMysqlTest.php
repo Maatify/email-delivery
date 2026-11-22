@@ -125,6 +125,84 @@ final class EmailQueueWorkerEntityTypeMysqlTest extends IsolatedEmailMysqlTestCa
         self::assertSame(['sent', 2], $this->state($userExpired));
     }
 
+    /** @return iterable<string, array{string, bool}> */
+    public static function tableShapes(): iterable
+    {
+        foreach (['package schema' => 'package', 'application-like table (utf8mb4_unicode_ci VARCHAR(32) NOT NULL, TIMESTAMP lease, entity index)' => 'application'] as $name => $shape) {
+            yield $name => [$shape, false];
+            yield $name . ' + 006' => [$shape, true];
+        }
+    }
+
+    /**
+     * The column compares with utf8mb4_unicode_ci: case- and accent-insensitive, trailing spaces ignored. A scoped
+     * batch must still take only its exact type, byte for byte, and leave every look-alike type unlocked.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('tableShapes')]
+    public function testAScopedBatchTakesOnlyItsExactEntityTypeByteForByte(string $shape, bool $with006): void
+    {
+        $this->shapeTable($shape, $with006);
+        $lookAlikes = [];
+        foreach (['Admin', 'ADMIN', 'admín', 'admin '] as $index => $type) {
+            $lookAlikes[$type] = $this->enqueue('look-alike-' . $index, $type, 1);
+        }
+        // A look-alike type's expired lease too: neither candidate read may take it.
+        $lookAlikeExpired = $this->stale($this->enqueue('look-alike-expired', 'ADMIN', 1), 1, gmdate('Y-m-d H:i:s', time() - 3600));
+        $exact = [$this->enqueue('admin-1', 'admin', 2), $this->enqueue('admin-2', 'admin', 2)];
+        $connection = new EmailQueueFaultPdo();
+        $workerThread = (int) self::scalar($connection, 'SELECT CONNECTION_ID()');
+        $mysql = self::isMysql($connection);
+        $observed = ['waited' => [], 'locked_ids' => null];
+        $connection->afterExecuteHook = function (string $sql) use (&$observed, $workerThread, $mysql, $lookAlikes, $lookAlikeExpired): void {
+            if (!str_contains($sql, 'FOR UPDATE')) {
+                return;
+            }
+            $other = self::connection();
+            $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
+            if ($mysql) {
+                $locks = ($other->query("
+                    SELECT l.LOCK_DATA FROM performance_schema.data_locks l
+                    JOIN performance_schema.threads t ON t.THREAD_ID = l.THREAD_ID
+                    WHERE t.PROCESSLIST_ID = $workerThread AND l.LOCK_TYPE = 'RECORD' AND l.LOCK_DATA <> 'supremum pseudo-record'") ?: throw new \LogicException('data_locks'))->fetchAll(PDO::FETCH_COLUMN);
+                $observed['locked_ids'] = array_map(static fn (mixed $id): int => is_scalar($id) ? (int) $id : 0, $locks);
+                sort($observed['locked_ids']);
+            }
+            foreach ([...$lookAlikes, 'ADMIN (expired lease)' => $lookAlikeExpired] as $type => $id) {
+                $other->beginTransaction();
+                try {
+                    $other->exec("UPDATE cd_email_queue SET last_error = 'its own worker' WHERE id = $id");
+                } catch (PDOException $failure) {
+                    $observed['waited'][] = "$type: " . ($failure->errorInfo[1] ?? '?');
+                } finally {
+                    $other->rollBack();
+                }
+            }
+        };
+
+        $this->worker($connection)->processBatchByEntityType('admin');
+
+        self::assertSame([], $observed['waited'], 'No look-alike type is locked.');
+        if ($mysql) {
+            self::assertSame($exact, $observed['locked_ids'], 'Only the exact type\'s primary keys are locked (MySQL data_locks).');
+        }
+        self::assertSame(2, $this->transport->calls, 'Only the exact type is sent.');
+        foreach ($exact as $id) {
+            self::assertSame(['sent', 1], $this->state($id));
+        }
+        foreach ($lookAlikes as $type => $id) {
+            self::assertSame(['pending', 0], $this->state($id), "'$type' is another type.");
+        }
+        self::assertSame(['processing', 1], $this->state($lookAlikeExpired), 'Another type\'s expired lease is not reclaimed.');
+
+        // Each look-alike type is exact for its own worker.
+        foreach ($lookAlikes as $type => $id) {
+            $before = $this->transport->calls;
+            $this->worker($this->pdo)->processBatchByEntityType($type);
+            self::assertSame($before + ($type === 'ADMIN' ? 2 : 1), $this->transport->calls, "Exactly the rows of type '$type'.");
+            self::assertSame(['sent', 1], $this->state($id));
+        }
+    }
+
     public function testTheLimitAppliesWithinTheEntityType(): void
     {
         $this->enqueue('user-1', 'user', 1);
@@ -188,38 +266,57 @@ final class EmailQueueWorkerEntityTypeMysqlTest extends IsolatedEmailMysqlTestCa
         self::assertSame(['sent', 1], $this->state($untyped));
     }
 
-    public function testACandidateWhoseEntityTypeChangedBeforeTheLockIsNotClaimed(): void
+    /** @return iterable<string, array{string}> */
+    public static function changedTypes(): iterable
+    {
+        yield 'another type' => ['user'];
+        yield 'a type differing in case' => ['Admin'];
+        yield 'a type with a trailing space' => ['admin '];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('changedTypes')]
+    public function testACandidateWhoseEntityTypeChangedBeforeTheLockIsNotClaimed(string $changedTo): void
     {
         $job = $this->enqueue('admin-1', 'admin', 1);
         $connection = new EmailQueueFaultPdo();
         $changed = false;
-        $connection->afterExecuteHook = function (string $sql) use ($job, &$changed): void {
+        $connection->afterExecuteHook = function (string $sql) use ($job, $changedTo, &$changed): void {
             if (str_starts_with(ltrim($sql), 'SELECT id FROM') && str_contains($sql, "status = 'pending'") && !$changed) {
                 // Between the unlocked candidate read and the lock, the row moves to another type.
                 $changed = true;
-                $this->pdo->exec("UPDATE cd_email_queue SET entity_type = 'user' WHERE id = $job");
+                $statement = $this->pdo->prepare('UPDATE cd_email_queue SET entity_type = ? WHERE id = ?');
+                $statement->execute([$changedTo, $job]);
             }
         };
 
         $this->worker($connection)->processBatchByEntityType('admin');
 
         self::assertTrue($changed);
-        self::assertSame(0, $this->transport->calls, 'The entity type is re-checked under the lock.');
+        self::assertSame(0, $this->transport->calls, 'The exact entity type is re-checked under the lock.');
         self::assertSame(['pending', 0], $this->state($job));
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function shapesFor006(): iterable
+    {
+        yield 'package schema + 006' => ['package'];
+        yield 'application-like table + 006' => ['application'];
     }
 
     /**
      * The optional schema 006: with it, each scoped candidate read walks only rows of its type in (priority, id)
-     * order instead of every row of its status ahead of them; the generic batch keeps using 005.
+     * order instead of every row of its status ahead of them, also with the exact byte comparison and look-alike
+     * types in the backlog; the generic batch keeps using 005.
      */
-    public function testWithSchema006TheScopedCandidateReadsWalkOnlyTheirType(): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('shapesFor006')]
+    public function testWithSchema006TheScopedCandidateReadsWalkOnlyTheirType(string $shape): void
     {
-        $sql = file_get_contents(dirname(__DIR__, 2) . '/schema/mysql/006_email_queue_entity_type_claim_index.sql');
-        self::assertIsString($sql);
-        $this->pdo->exec($sql);
+        $this->shapeTable($shape, true);
         // A backlog of the other type ahead in both statuses: due rows, and in-flight rows with a current lease.
         $this->seedDueRows('user', 600, 1);
         $this->pdo->exec("UPDATE cd_email_queue SET status = 'processing', attempts = 1, updated_at = UTC_TIMESTAMP() WHERE entity_type = 'user' ORDER BY id LIMIT 300");
+        // Look-alike types share the collation-equal index entries but are other types.
+        $lookAlikes = [$this->enqueue('look-alike-1', 'Admin', 9), $this->enqueue('look-alike-2', 'admin ', 9)];
         $admins = [$this->enqueue('admin-1', 'admin', 9), $this->enqueue('admin-2', 'admin', 9)];
         $adminExpired = $this->stale($this->enqueue('admin-expired', 'admin', 9), 1, gmdate('Y-m-d H:i:s', time() - 3600));
         ($this->pdo->query('ANALYZE TABLE cd_email_queue') ?: throw new \LogicException('ANALYZE'))->fetchAll();
@@ -227,14 +324,18 @@ final class EmailQueueWorkerEntityTypeMysqlTest extends IsolatedEmailMysqlTestCa
         $scoped = $this->candidateReadPlans(static fn (EmailQueueWorker $worker) => $worker->processBatchByEntityType('admin'));
 
         self::assertCount(2, $scoped, 'Both candidate reads, expired leases and due rows.');
-        foreach ($scoped as $sql => [$key, $type, $extra]) {
+        foreach ($scoped as $sql => [$key, $type, $extra, $rows]) {
             self::assertSame('idx_email_queue_claim_entity_type', $key, $sql);
-            self::assertSame('ref', $type, 'An equality walk of one status and one type: ' . $sql);
+            self::assertContains($type, ['ref', 'range'], 'A walk of one status and one type: ' . $sql);
+            self::assertLessThan(100, $rows, 'It reads its own type, not the 600-row backlog of another: ' . $sql);
             self::assertStringNotContainsString('filesort', $extra, 'In (priority, id) order, stopping at the limit.');
         }
         self::assertSame(3, $this->transport->calls);
         foreach ([...$admins, $adminExpired] as $id) {
             self::assertSame('sent', $this->state($id)[0]);
+        }
+        foreach ($lookAlikes as $id) {
+            self::assertSame(['pending', 0], $this->state($id));
         }
 
         $generic = $this->candidateReadPlans(static fn (EmailQueueWorker $worker) => $worker->processBatch(1));
@@ -268,10 +369,30 @@ final class EmailQueueWorkerEntityTypeMysqlTest extends IsolatedEmailMysqlTestCa
     }
 
     /**
+     * The package schema as installed (001, 002, 005), or reshaped like an application-owned table: entity_type a
+     * utf8mb4_unicode_ci VARCHAR(32) NOT NULL with its own (entity_type, entity_id) index, and a TIMESTAMP lease.
+     * Optionally with schema 006.
+     */
+    private function shapeTable(string $shape, bool $with006): void
+    {
+        if ($shape === 'application') {
+            $this->pdo->exec('ALTER TABLE cd_email_queue
+                MODIFY entity_type VARCHAR(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+                MODIFY updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                ADD INDEX idx_application_entity (entity_type, entity_id)');
+        }
+        if ($with006) {
+            $sql = file_get_contents(dirname(__DIR__, 2) . '/schema/mysql/006_email_queue_entity_type_claim_index.sql');
+            self::assertIsString($sql);
+            $this->pdo->exec($sql);
+        }
+    }
+
+    /**
      * Runs one batch and returns the EXPLAIN of each unlocked candidate read it made.
      *
      * @param \Closure(EmailQueueWorker): void $batch
-     * @return array<string, array{string, string, string}> key, access type and Extra, by statement
+     * @return array<string, array{string, string, string, int}> key, access type, Extra and estimated rows, by statement
      */
     private function candidateReadPlans(\Closure $batch): array
     {
@@ -292,11 +413,12 @@ final class EmailQueueWorkerEntityTypeMysqlTest extends IsolatedEmailMysqlTestCa
             }
             if (str_contains($sql, ':entity_type')) {
                 $plan->bindValue(':entity_type', 'admin');
+                $plan->bindValue(':entity_type_exact', 'admin');
             }
             $plan->execute();
             $row = $plan->fetch(PDO::FETCH_ASSOC);
             self::assertIsArray($row);
-            $plans[$sql] = [is_string($row['key'] ?? null) ? $row['key'] : '', is_string($row['type'] ?? null) ? $row['type'] : '', is_string($row['Extra'] ?? null) ? $row['Extra'] : ''];
+            $plans[$sql] = [is_string($row['key'] ?? null) ? $row['key'] : '', is_string($row['type'] ?? null) ? $row['type'] : '', is_string($row['Extra'] ?? null) ? $row['Extra'] : '', is_numeric($row['rows'] ?? null) ? (int) $row['rows'] : PHP_INT_MAX];
         }
         return $plans;
     }

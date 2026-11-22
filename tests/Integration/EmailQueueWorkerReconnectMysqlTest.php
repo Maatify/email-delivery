@@ -872,6 +872,7 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
             $plan->bindValue(':limit', 10, PDO::PARAM_INT);
             if (str_contains($sql, ':entity_type')) {
                 $plan->bindValue(':entity_type', (string) $this->batchEntityType());
+                $plan->bindValue(':entity_type_exact', (string) $this->batchEntityType());
             }
             if (str_contains($sql, ':lease')) {
                 $plan->bindValue(':lease', EmailQueueWorker::DEFAULT_PROCESSING_LEASE_SECONDS, PDO::PARAM_INT);
@@ -1368,7 +1369,7 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
             ++$observed['locking_reads'];
             $other = self::connection();
             $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
-            $explained = preg_replace('/\bFOR UPDATE\b/', '', str_replace([':lease', ':entity_type'], ['300', "'" . $this->batchEntityType() . "'"], (string) preg_replace('/\(:id\d+(?:, :id\d+)*\)/', '(' . implode(', ', $candidates) . ')', $sql)));
+            $explained = preg_replace('/\bFOR UPDATE\b/', '', str_replace([':lease', ':entity_type_exact', ':entity_type'], ['300', "'" . $this->batchEntityType() . "'", "'" . $this->batchEntityType() . "'"], (string) preg_replace('/\(:id\d+(?:, :id\d+)*\)/', '(' . implode(', ', $candidates) . ')', $sql)));
             foreach (($other->query('EXPLAIN ' . $explained) ?: throw new \LogicException('EXPLAIN failed'))->fetchAll(PDO::FETCH_ASSOC) as $step) {
                 $observed['plan'][] = [(string) ($step['key'] ?? ''), (string) ($step['type'] ?? '')];
             }
