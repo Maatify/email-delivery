@@ -426,13 +426,14 @@ final class EmailQueueWorker
         try {
             // ── Exponential backoff or permanent fail ─────────
             if ($attempts >= self::MAX_ATTEMPTS) {
-                $recorded = $this->withReconnect(static function (PDO $pdo) use ($table, $errorMsg, $id, $attempts): bool {
+                $recorded = $this->withReconnect(static function (PDO $pdo, bool $repeat) use ($table, $errorMsg, $id, $attempts): bool {
                     $statement = $pdo->prepare(
                         "UPDATE `$table` SET status = 'failed', last_error = :error
                          WHERE id = :id AND status = 'processing' AND attempts = :attempt"
                     );
                     $statement->execute(['error' => $errorMsg, 'id' => $id, 'attempt' => $attempts]);
-                    return $statement->rowCount() === 1 || self::storedOutcome($pdo, $table, $id, $attempts, 'failed') !== null;
+                    return $statement->rowCount() === 1
+                        || ($repeat && self::storedOutcome($pdo, $table, $id, $attempts, 'failed', $errorMsg) !== null);
                 });
 
                 if ($recorded) {
@@ -444,7 +445,7 @@ final class EmailQueueWorker
             } else {
                 $delaySecs  = $backoff[$attempts] ?? 3600;
                 [$recorded, $retryAfter] = $this->withReconnect(
-                    function (PDO $pdo) use ($table, $errorMsg, $id, $attempts, $keyed, $delaySecs): array {
+                    function (PDO $pdo, bool $repeat) use ($table, $errorMsg, $id, $attempts, $keyed, $delaySecs): array {
                         $retryAfter = $keyed
                             ? $this->keyedRetryAfter($pdo, $delaySecs)
                             : date('Y-m-d H:i:s', time() + $delaySecs);
@@ -460,7 +461,7 @@ final class EmailQueueWorker
                         if ($statement->rowCount() === 1) {
                             return [true, $retryAfter];
                         }
-                        $stored = self::storedOutcome($pdo, $table, $id, $attempts, 'pending');
+                        $stored = $repeat ? self::storedOutcome($pdo, $table, $id, $attempts, 'pending', $errorMsg) : null;
                         // Already recorded by this attempt (a repeat after a lost acknowledgement): report the stored retry time.
                         return $stored === null ? [false, $retryAfter] : [true, $stored['retry_after'] ?? $retryAfter];
                     }
@@ -502,14 +503,14 @@ final class EmailQueueWorker
      * When the server has closed the connection, it reconnects through the factory and runs them exactly once more.
      *
      * @template T
-     * @param Closure(PDO): T $operation
+     * @param Closure(PDO, bool): T $operation receives the connection and whether this is the repeat after a reconnect
      * @return T
      */
     private function withReconnect(Closure $operation): mixed
     {
         try {
             $pdo = $this->connection ?? $this->reconnect();
-            return $this->onPossiblyClosedConnection(static fn (): mixed => $operation($pdo));
+            return $this->onPossiblyClosedConnection(static fn (): mixed => $operation($pdo, false));
         } catch (PDOException $failure) {
             if ($this->connectionFactory === null || !self::isConnectionLost($failure)) {
                 throw $failure;
@@ -518,7 +519,8 @@ final class EmailQueueWorker
                 'error_code' => $failure->errorInfo[1] ?? null,
             ]);
             $fresh = $this->reconnect();
-            return $this->onPossiblyClosedConnection(static fn (): mixed => $operation($fresh));
+            // The repeat: only here can an earlier execution have applied with its acknowledgement lost.
+            return $this->onPossiblyClosedConnection(static fn (): mixed => $operation($fresh, true));
         }
     }
 
@@ -667,15 +669,20 @@ final class EmailQueueWorker
     }
 
     /**
-     * A fenced outcome write that matched no row: when the row already holds this attempt's outcome, an earlier
-     * execution of the same write applied and only its acknowledgement was lost.
+     * Consulted only for the repeat after a reconnect, when the fenced write matched no row: the row holds this
+     * attempt's own outcome (same status, attempt number and error message) only if the first execution
+     * applied and its acknowledgement was lost. A row another batch settled or rescheduled carries its own
+     * error message (for example processing_lease_expired at the attempt cap, which keeps the attempt
+     * number), so it never counts as this attempt's outcome.
      *
      * @return array{retry_after: string|null}|null
      */
-    private static function storedOutcome(PDO $pdo, string $table, int $id, int $attempt, string $status): ?array
+    private static function storedOutcome(PDO $pdo, string $table, int $id, int $attempt, string $status, string $error): ?array
     {
-        $statement = $pdo->prepare("SELECT retry_after FROM `$table` WHERE id = :id AND status = :status AND attempts = :attempt");
-        $statement->execute(['id' => $id, 'status' => $status, 'attempt' => $attempt]);
+        $statement = $pdo->prepare(
+            "SELECT retry_after FROM `$table` WHERE id = :id AND status = :status AND attempts = :attempt AND last_error = :error"
+        );
+        $statement->execute(['id' => $id, 'status' => $status, 'attempt' => $attempt, 'error' => $error]);
         /** @var array{retry_after: string|null}|false $row */
         $row = $statement->fetch(PDO::FETCH_ASSOC);
         $statement->closeCursor();

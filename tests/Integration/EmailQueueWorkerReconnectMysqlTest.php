@@ -481,6 +481,90 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame(1, $this->transport->calls);
     }
 
+    public function testALastAttemptWhoseSendFailsAfterItsRowWasSettledAtTheCapReportsLostOwnership(): void
+    {
+        $job = $this->enqueue('key-1');
+        $this->pdo->exec("UPDATE cd_email_queue SET attempts = 3 WHERE id = $job");
+        $other = $this->worker(self::connection());
+        $this->transport->duringSend = function (int $call) use ($job, $other): void {
+            if ($call === 1) {
+                // This last attempt outlasts the lease: another worker settles the row at the cap (attempts stay 4).
+                $this->expireLease($job);
+                $other->processBatch();
+                // Then this attempt's own send fails.
+                $this->transport->fail = true;
+            }
+        };
+
+        $this->worker($this->pdo)->processBatch();
+
+        $this->assertSettledAtTheCapAndOwnershipLost($job);
+    }
+
+    public function testALastAttemptWhoseFailureWriteIsRepeatedAfterItsRowWasSettledAtTheCapReportsLostOwnership(): void
+    {
+        $job = $this->enqueue('key-1');
+        $this->pdo->exec("UPDATE cd_email_queue SET attempts = 3 WHERE id = $job");
+        $other = $this->worker(self::connection());
+        $this->transport->duringSend = function (int $call) use ($job, $other): void {
+            if ($call === 1) {
+                $this->expireLease($job);
+                $other->processBatch();
+                $this->transport->fail = true;
+            }
+        };
+        $faults = 0;
+        // The failure write loses its connection before it runs, so the repeat after the reconnect reads the row back.
+        $worker = $this->worker(function () use (&$faults): PDO {
+            $pdo = $this->statementFaults("SET status = 'failed', last_error = :error", 2006, $faults);
+            $this->connections[] = $pdo;
+            return $pdo;
+        });
+
+        $worker->processBatch();
+
+        self::assertSame(1, $faults);
+        self::assertCount(2, $this->connections, 'The repeat ran on a new connection.');
+        $this->assertSettledAtTheCapAndOwnershipLost($job);
+    }
+
+    public function testAFirstTryFailureWriteThatMatchesNoRowNeverReadsTheRowBack(): void
+    {
+        $job = $this->enqueue('key-1');
+        $this->transport->fail = true;
+        $this->transport->duringSend = function () use ($job): void {
+            // Something else already holds exactly the outcome this attempt is about to write.
+            $this->pdo->exec("UPDATE cd_email_queue SET status = 'pending',
+                last_error = 'smtp_transport_error: Fixture SMTP failure; no network' WHERE id = $job");
+        };
+
+        $this->worker($this->pdo)->processBatch();
+
+        self::assertSame([], $this->logger->contexts('info', 'Email job scheduled for retry'), 'Without a reconnect there is no lost acknowledgement to recover.');
+        self::assertCount(1, $this->logger->contexts('warning', 'Email job outcome not recorded: ' . self::NOT_OWNED));
+        self::assertNull($this->scalarOrNull("SELECT retry_after FROM cd_email_queue WHERE id = $job"));
+    }
+
+    public function testTheSentWriteIsRepeatedExactlyOnceWhenTheNewConnectionIsLostToo(): void
+    {
+        $first = $this->enqueue('key-1');
+        $second = $this->enqueue('key-2');
+        $worker = $this->worker(function (): PDO {
+            // The first two connections lose their link on the sent write; a third one would succeed.
+            $faults = count($this->connections) < 2 ? 0 : 1;
+            $pdo = $this->statementFaults("SET status = 'sent'", 2006, $faults);
+            $this->connections[] = $pdo;
+            return $pdo;
+        });
+
+        $error = $this->errorOf(static fn () => $worker->processBatch());
+
+        self::assertNotNull($error);
+        self::assertCount(2, $this->connections, 'One reconnect, one repeat.');
+        self::assertSame(1, $this->transport->calls);
+        self::assertSame(['processing', 'processing'], [$this->row($first)['status'], $this->row($second)['status']]);
+    }
+
     public function testARenewalInTheClaimSecondChangesNoRowYetTheOwningAttemptSendsExactlyOnce(): void
     {
         $job = $this->enqueue('key-1');
@@ -881,6 +965,15 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
     }
 
     // ── fixture helpers ───────────────────────────────────────────
+
+    private function assertSettledAtTheCapAndOwnershipLost(int $job): void
+    {
+        $row = $this->row($job);
+        self::assertSame(['failed', '4', 'processing_lease_expired'], [$row['status'], $row['attempts'], $row['last_error']], 'The settlement stands.');
+        $failed = $this->logger->contexts('warning', 'Email job permanently failed');
+        self::assertSame(['processing_lease_expired'], array_column($failed, 'reason'), 'Only the settlement reports a permanent failure.');
+        self::assertCount(1, $this->logger->contexts('warning', 'Email job outcome not recorded: ' . self::NOT_OWNED));
+    }
 
     /** A real connection whose first `sent` write fails with the given driver code. */
     private function sentWriteFaults(?int $driverCode, int &$faults): EmailQueueFaultPdo
