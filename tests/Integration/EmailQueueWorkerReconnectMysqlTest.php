@@ -815,7 +815,7 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame('no wait', $observed['finished_row_write'] ?? null, 'A finished row stays writable while the claim runs.');
         self::assertLessThan(100, $observed['rows_locked'] ?? PHP_INT_MAX, 'With 301 due rows, the claim locks about a batch, not every due row.');
         foreach ($claimReads as $sql) {
-            // The expired-lease candidate read and the due pending read both walk the claim index in order.
+            // Both unlocked candidate reads, expired leases and due pending rows, walk the claim index in order.
             $plan = $this->pdo->prepare('EXPLAIN ' . str_replace('FOR UPDATE', '', $sql));
             $plan->bindValue(':limit', 10, PDO::PARAM_INT);
             if (str_contains($sql, ':lease')) {
@@ -825,9 +825,11 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
             /** @var array{type: string, key: string|null, Extra: string|null} $row */
             $row = $plan->fetch(PDO::FETCH_ASSOC);
             self::assertSame('idx_email_queue_claim', $row['key'], $sql);
+            // An equality walk of one status, not a scan of the whole index (an index not led by status).
+            self::assertContains($row['type'], ['ref', 'range'], 'Only the rows of one status are read: ' . $sql);
             self::assertStringNotContainsString('filesort', (string) $row['Extra'], 'Read in index order, stopping at the limit.');
         }
-        self::assertCount(2, $claimReads, 'One ordered read per status.');
+        self::assertCount(2, $claimReads, 'One ordered candidate read per status.');
     }
 
     public function testTheBatchLimitAndOrderSpanBothClaimReads(): void
@@ -1221,10 +1223,7 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
 
         self::assertSame(1, $observed['locking_reads']);
         self::assertSame([], $observed['waited'], 'Writes to rows that are not due, and enqueues at any priority, never wait for the claim.');
-        self::assertSame(1, $observed['rows_locked'], 'The claim locks only its one candidate (INNODB_TRX).');
-        if ($mysql) {
-            self::assertSame([['PRIMARY', 'X,REC_NOT_GAP', (string) $due]], $observed['record_locks'], 'One primary-key record lock, on the due row: no index entry, no gap (MySQL data_locks).');
-        }
+        self::assertCandidateLocksOnly([$due], $observed['rows_locked'], $observed['record_locks']);
         self::assertSame('sent', $this->row($due)['status']);
         self::assertSame(1000, (int) self::scalar($this->pdo, "SELECT COUNT(*) FROM cd_email_queue WHERE status = 'pending' AND attempts = 0 AND priority = 1"));
     }
@@ -1283,14 +1282,7 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         self::assertSame(1, $observed['locking_reads']);
         self::assertSame([['PRIMARY', 'range']], $observed['plan'], 'The locking read looks the candidates up by primary key.');
         self::assertSame([], $observed['blocked'], 'No outcome write on a fresh in-flight row waits for the claim.');
-        self::assertSame(count($candidates), $observed['rows_locked'], 'Exactly the candidates are locked (INNODB_TRX).');
-        if ($mysql) {
-            self::assertSame(
-                array_map(static fn (int $id): array => ['PRIMARY', 'X,REC_NOT_GAP', (string) $id], $candidates),
-                $observed['record_locks'],
-                'Only the candidates\' primary-key records are locked: no fresh row, no index entry, no gap (MySQL data_locks).',
-            );
-        }
+        self::assertCandidateLocksOnly($candidates, $observed['rows_locked'], $observed['record_locks']);
         foreach ($expired as $id) {
             self::assertSame(['sent', '2'], [$this->row($id)['status'], $this->row($id)['attempts']], 'Each expired lease is claimed and sent again.');
         }
@@ -1468,6 +1460,39 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
                 attempts, scheduled_at, created_at, updated_at)
             VALUES ('user', 'probe', 'x', 'iv', 'tag', 'k', 'x', 'iv', 'tag', 'k', 'welcome', 'en', 1, $priority, 'pending',
                 0, NOW(), NOW(), NOW())";
+    }
+
+    /**
+     * The claim's locks are its candidates' primary-key records, nothing else. One addition is allowed: when a
+     * candidate is the first record on its page, InnoDB's in-order primary-key read passes the previous page's
+     * supremum and takes a next-key lock on it. That covers only the gap between the candidate and the id
+     * before it, so at most one such lock per candidate, on PRIMARY.
+     *
+     * @param list<int> $candidates
+     * @param list<array{string, string, string}>|null $recordLocks MySQL data_locks, null on MariaDB
+     */
+    private static function assertCandidateLocksOnly(array $candidates, ?int $rowsLocked, ?array $recordLocks): void
+    {
+        sort($candidates);
+        if ($recordLocks === null) {
+            // MariaDB has no data_locks; INNODB_TRX counts the same locks.
+            self::assertNotNull($rowsLocked);
+            self::assertGreaterThanOrEqual(count($candidates), $rowsLocked, 'Every candidate is locked (INNODB_TRX).');
+            self::assertLessThanOrEqual(2 * count($candidates), $rowsLocked, 'Nothing but the candidates, and at most one page boundary each, is locked (INNODB_TRX).');
+            return;
+        }
+        $supremum = array_values(array_filter($recordLocks, static fn (array $lock): bool => $lock[2] === 'supremum pseudo-record'));
+        $records = array_values(array_filter($recordLocks, static fn (array $lock): bool => $lock[2] !== 'supremum pseudo-record'));
+        self::assertSame(
+            array_map(static fn (int $id): array => ['PRIMARY', 'X,REC_NOT_GAP', (string) $id], $candidates),
+            $records,
+            'Only the candidates\' primary-key records are locked: no other row, no index entry, no gap before a record (MySQL data_locks).',
+        );
+        self::assertLessThanOrEqual(count($candidates), count($supremum));
+        foreach ($supremum as $lock) {
+            self::assertSame(['PRIMARY', 'X', 'supremum pseudo-record'], $lock, 'The only other lock is a primary-key page boundary before a candidate.');
+        }
+        self::assertSame(count($records) + count($supremum), $rowsLocked, 'INNODB_TRX counts exactly these locks.');
     }
 
     private static function isMysql(PDO $pdo): bool
