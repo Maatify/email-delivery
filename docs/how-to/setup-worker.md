@@ -24,6 +24,10 @@ defines dependency-taking functions and does nothing at include time.
    lease as the [worker book](../book/worker.md#processing-lease) describes.
 6. Call `processBatch(50)` from your application's supervised process. Select batch size/polling/supervision
    in the application.
+7. For a worker dedicated to one entity type in a shared queue, call `processBatchByEntityType('admin', 50)`
+   instead (Unreleased). Every type, and rows without a type, still need a worker: a scoped batch only
+   reclaims leases of its own type, and only `processBatch()` takes rows whose `entity_type` is NULL.
+   Behind a large backlog of other types, apply the optional [schema 006](../upgrade.md#scoped-batch-index-006-unreleased).
 
 Keyed worker comparisons, retry deadlines and sent timestamps are database UTC even when its session
 is local. NULL-token/pre-003 legacy work keeps its existing local clock behavior. The worker discovers

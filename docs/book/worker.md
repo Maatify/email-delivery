@@ -3,6 +3,8 @@
 [Book](README.md) · [Worker setup](../how-to/setup-worker.md) · [Retry details](retry-mechanism.md)
 
 `EmailQueueWorker::processBatch(int $limit=50): void` processes one batch; it is not a daemon.
+`processBatchByEntityType(string $entityType, int $limit=50): void` processes one batch of a single
+entity type; see [scoped batches](#scoped-batches-one-entity-type).
 The application supplies a connection, real crypto contexts, renderer, transport and PSR-3 logger.
 Give the worker a connection factory, a `Closure(): PDO` that returns a new exception-mode connection
 with your session settings, so that it can replace a connection the server closed. A `PDO` instance
@@ -168,6 +170,63 @@ first record on its page, MySQL can also take a next-key lock on the previous pa
 the in-order read passes it. That lock covers only the gap between the candidate and the id just before
 it, where new auto-increment ids never land. No enqueue, reschedule or outcome write waited in any
 measurement. The worker never changes the isolation level.
+
+## Scoped batches: one entity type
+
+`processBatchByEntityType($entityType, $limit)` runs the same batch as `processBatch($limit)`, but only for
+rows whose `entity_type` equals `$entityType` exactly, byte for byte. Use it for a worker dedicated to one
+kind of mail, such as administrator mail, in a queue that also holds other kinds. `processBatch()` is
+unchanged and still takes every row.
+
+- **Where the filter applies:** both unlocked candidate reads (due `pending` rows and expired leases) and
+  the primary-key locking read that re-checks them. A scoped batch never takes, claims, reclaims, settles or
+  sends a row of another type, and never locks a row that was not a candidate of its own type at the
+  unlocked read.
+- **A candidate that changed before the lock:** if a candidate's type (or its state) changes between the
+  unlocked read and the lock, it fails the re-check and is not taken. The locking read has still read it by
+  primary key, so, as with every candidate (see [what waits for an open claim](#what-waits-for-an-open-claim)),
+  it stays locked until the claim transaction ends under REPEATABLE READ (the default), and is released right
+  after the re-check under READ COMMITTED. A row that moved from `admin` to `user` in that window can
+  therefore keep a short lock from the `admin` batch. Measured on MySQL 8.0 and MariaDB 11.4, on the package
+  schema and on an application-like table, with and without 006.
+- **Exactly means byte for byte:** case, accents and trailing spaces count, whatever the column's collation.
+  The package schema compares `entity_type` with `utf8mb4_unicode_ci`, which ignores all three, so each
+  statement follows the collation equality (which an index on `entity_type` can serve) with a comparison of
+  the UTF-8 bytes. A batch for `admin` never takes `Admin`, `ADMIN`, `admín` or `admin `.
+- **Leases:** a scoped batch reclaims, and settles at the attempt cap, only rows of its own type. So every
+  type in the queue needs a worker, scoped or generic: an expired lease of a type nobody processes is never
+  reclaimed. Rows of other types keep their leases and stay available to their own workers.
+- **No type:** a row whose `entity_type` is NULL never matches, so only `processBatch()` takes it. An empty
+  `$entityType` is rejected with `InvalidArgumentException` before the worker connects.
+- **Limit:** counts rows of the scoped type, taken in priority/ID order.
+- **Everything else is shared** with `processBatch()`: the connection checks (error mode, autocommit),
+  reconnects, the lease clock (`DATETIME` and `TIMESTAMP`), renewal, fence, lost-acknowledgement
+  read-back, retries and the lock scope above. The repository runs its whole reconnect and claim test
+  suite a second time through the scoped method.
+
+### Index for scoped batches (optional `006`)
+
+The candidate reads use the claim index from `005`, led by `(status, priority, id)`. Without locks, a
+scoped read walks every row of its status that is ahead of its type in that order until it finds `$limit`
+rows of its type. That costs time, not locks, and it grows with the backlog of other types. Measured on the
+package schema with 005, one scoped due-candidate read (the worker's statement, byte comparison included)
+behind due rows of another type. Figures are rounded medians of seven runs; two runs of the same statement
+agreed within 5%:
+
+| Other-type due rows ahead | MySQL 8.0.46 | MariaDB 11.4 |
+| --- | --- | --- |
+| 5,000 | about 4 ms | about 11 ms |
+| 20,000 | about 12 ms | about 43 ms |
+| 50,000 | about 30 ms | about 105 ms |
+| 100,000 | about 60 ms | about 210 ms |
+
+[`006_email_queue_entity_type_claim_index.sql`](../../schema/mysql/006_email_queue_entity_type_claim_index.sql)
+adds `idx_email_queue_claim_entity_type (status, entity_type, priority, id)`, so each scoped read walks only
+its own type: under 1 ms in every case above. With a case-insensitive collation the index lookup also
+visits look-alike types (`Admin` for `admin`), which the byte comparison then drops. Apply it after 005 only
+if you run scoped batches behind a large backlog of other types. `processBatch()` keeps using 005
+(measured), and every status change then maintains one more index entry. A table that already has an index
+led by `(status, entity_type, priority, id)` does not need it.
 
 ## Lost connections
 
