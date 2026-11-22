@@ -528,21 +528,58 @@ final class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCas
         $this->assertSettledAtTheCapAndOwnershipLost($job);
     }
 
-    public function testAFirstTryFailureWriteThatMatchesNoRowNeverReadsTheRowBack(): void
+    /** @return iterable<string, array{int, string, string, string}> */
+    public static function firstTryWrites(): iterable
+    {
+        yield 'retry write' => [0, 'pending', 'info', 'Email job scheduled for retry'];
+        yield 'final failure write' => [3, 'failed', 'warning', 'Email job permanently failed'];
+    }
+
+    #[DataProvider('firstTryWrites')]
+    public function testAFirstTryFailureWriteThatMatchesNoRowNeverReadsTheRowBack(int $priorAttempts, string $status, string $level, string $recordedMessage): void
     {
         $job = $this->enqueue('key-1');
+        $this->pdo->exec("UPDATE cd_email_queue SET attempts = $priorAttempts WHERE id = $job");
         $this->transport->fail = true;
-        $this->transport->duringSend = function () use ($job): void {
+        $this->transport->duringSend = function () use ($job, $status): void {
             // Something else already holds exactly the outcome this attempt is about to write.
-            $this->pdo->exec("UPDATE cd_email_queue SET status = 'pending',
+            $this->pdo->exec("UPDATE cd_email_queue SET status = '$status',
                 last_error = 'smtp_transport_error: Fixture SMTP failure; no network' WHERE id = $job");
         };
 
         $this->worker($this->pdo)->processBatch();
 
-        self::assertSame([], $this->logger->contexts('info', 'Email job scheduled for retry'), 'Without a reconnect there is no lost acknowledgement to recover.');
+        self::assertSame([], $this->logger->contexts($level, $recordedMessage), 'Without a reconnect there is no lost acknowledgement to recover.');
         self::assertCount(1, $this->logger->contexts('warning', 'Email job outcome not recorded: ' . self::NOT_OWNED));
         self::assertNull($this->scalarOrNull("SELECT retry_after FROM cd_email_queue WHERE id = $job"));
+    }
+
+    public function testARepeatedRetryWriteNeverTakesANewerAttemptsIdenticalOutcomeAsItsOwn(): void
+    {
+        $job = $this->enqueue('key-1');
+        $this->transport->fail = true;
+        $this->transport->duringSend = function () use ($job): void {
+            // A newer attempt reclaimed the row, failed the same way and rescheduled it: same status and
+            // error message, another attempt number.
+            $this->pdo->exec("UPDATE cd_email_queue SET attempts = attempts + 1, status = 'pending',
+                last_error = 'smtp_transport_error: Fixture SMTP failure; no network',
+                retry_after = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 30 SECOND) WHERE id = $job");
+        };
+        $faults = 0;
+        // This attempt's retry write loses its connection before it runs, so the repeat reads the row back.
+        $worker = $this->worker(function () use (&$faults): PDO {
+            $pdo = $this->statementFaults("status      = 'pending'", 2006, $faults);
+            $this->connections[] = $pdo;
+            return $pdo;
+        });
+
+        $worker->processBatch();
+
+        self::assertSame(1, $faults);
+        self::assertCount(2, $this->connections);
+        self::assertSame(['pending', '2'], [$this->row($job)['status'], $this->row($job)['attempts']]);
+        self::assertSame([], $this->logger->contexts('info', 'Email job scheduled for retry'), 'The newer attempt\'s outcome is not this attempt\'s.');
+        self::assertCount(1, $this->logger->contexts('warning', 'Email job outcome not recorded: ' . self::NOT_OWNED));
     }
 
     public function testTheSentWriteIsRepeatedExactlyOnceWhenTheNewConnectionIsLostToo(): void
