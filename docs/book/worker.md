@@ -8,9 +8,9 @@ Give the worker a connection factory, a `Closure(): PDO` that returns a new exce
 with your session settings, so that it can replace a connection the server closed. A `PDO` instance
 still works but cannot reconnect. On MySQL/MariaDB every worker connection needs autocommit enabled
 (the server default): its status writes must commit on their own. The worker checks
-`@@SESSION.autocommit` on each factory connection when it is created, and on a `PDO` instance once
-before its first claim, and throws `UnexpectedValueException` before claiming or writing anything when it
-is off. It never changes the setting. Every worker connection must also report failures by exception
+`@@SESSION.autocommit` on each factory connection when it is created, and on a `PDO` instance before
+every claim, because the application owns that connection and can turn autocommit off between batches. It
+throws `UnexpectedValueException` before claiming or writing anything when it is off. It never changes the setting. Every worker connection must also report failures by exception
 (`PDO::ERRMODE_EXCEPTION`, PHP's default): under `ERRMODE_SILENT` or `ERRMODE_WARNING` a failed status
 write or lease renewal only returns `false`, and the worker could report a send it never recorded. A
 factory connection in another mode is rejected when it is created, and a `PDO` instance is checked before

@@ -26,8 +26,11 @@ which scheduled a second send of a message that had already been sent.
    instance keeps the 1.2.0 single-connection behaviour: it cannot reconnect.
    On MySQL/MariaDB every worker connection must have autocommit enabled, because its status writes must
    commit on their own. Every factory connection is checked when it is created, and a `PDO` instance
-   once before its first claim, with `SELECT @@SESSION.autocommit`, the same check the keyed and
-   synthetic adapters make. A connection with autocommit off is rejected with `UnexpectedValueException`
+   before every claim, because the application owns it and can turn autocommit off between batches
+   (`SET SESSION autocommit = 0` or `PDO::ATTR_AUTOCOMMIT`), with `SELECT @@SESSION.autocommit`, the same
+   check the keyed and synthetic adapters make. Checked only once, a later change slipped through: the
+   next batch sent the message and logged `Email sent` while the `sent` write stayed uncommitted
+   (reproduced on both engines). A connection with autocommit off is rejected with `UnexpectedValueException`
    before anything is claimed or written. The worker never changes the setting. The session time zone is
    not required, because legacy rows use the database-local `NOW()`.
    Every worker connection must be in exception error mode (`PDO::ERRMODE_EXCEPTION`). In
@@ -205,7 +208,8 @@ which scheduled a second send of a message that had already been sent.
   not run older and newer workers on the same table: older workers neither stamp nor renew the lease.
 - The worker changes no session setting on any connection. Session settings belong to the factory.
 - Every row costs two more statements: the renewal and the ownership read. A retry/failed write that
-  matches no row costs one more read. Each worker connection costs one autocommit read when first used.
+  matches no row costs one more read. Each factory connection costs one autocommit read when it is
+  created, and a `PDO` instance one per batch.
 - `PDO` instance users whose connection has autocommit off now get `UnexpectedValueException` before
   any claim, where 1.2.0 ran on with uncommitted status writes.
 - `PDO` instance users whose connection is not in exception error mode (`ERRMODE_SILENT` or
@@ -242,7 +246,8 @@ The repository test `EmailQueueWorkerReconnectMysqlTest` runs against real MySQL
 - a last attempt whose send fails after another worker settled its row at the cap, on the first try and
   on the repeat after a reconnect, plus a first-try write that never reads the row back;
 - connections without autocommit, from a factory (attribute or init command), on reconnect, or as a
-  plain `PDO`;
+  plain `PDO`, including a plain `PDO` whose autocommit is turned off between batches (statement or
+  attribute);
 - a plain `PDO` in `ERRMODE_SILENT` whose `sent` write or lease renewal fails after it prepared (a
   trigger): nothing is claimed, sent or reported as sent; a plain `PDO` switched to silent mode between
   batches is refused before the next claim;

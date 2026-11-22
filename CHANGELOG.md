@@ -79,7 +79,8 @@ Published dates below use the corresponding GitHub Release publication date in U
   upgraded batch and may be sent again; review them first, and do not run older and newer workers on
   the same table. Each row now costs two more statements (lease renewal and ownership read).
 - `PDO` instance users whose connection has autocommit off now get `UnexpectedValueException` before
-  any claim. Factory connections are checked the same way, and the worker never changes the setting.
+  every claim, including when it is turned off between batches. Factory connections are checked when
+  created, and the worker never changes the setting.
 - `PDO` instance users whose connection is not in exception error mode (`ERRMODE_SILENT` or
   `ERRMODE_WARNING`) now get `UnexpectedValueException` before every claim. In those modes a failed
   status write or lease renewal went unnoticed, so a message could be reported sent without being

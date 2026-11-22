@@ -15,8 +15,8 @@ defines dependency-taking functions and does nothing at include time.
    with autocommit enabled (the MySQL/MariaDB default) and applies your session settings each time it is
    called. The worker rejects a connection without autocommit, or not in exception error mode, before
    claiming anything. The worker calls it on first use and again only after the server closed its
-   connection. A `PDO` instance is still accepted, in exception error mode (checked before every claim),
-   but then the worker cannot reconnect. Do not wrap the worker in another transaction.
+   connection. A `PDO` instance is still accepted, in exception error mode and with autocommit enabled
+   (both checked before every claim), but then the worker cannot reconnect. Do not wrap the worker in another transaction.
 3. Supply read keys for queued payloads/recipients and stable contexts, plus trusted template root/globals.
 4. Construct the transport with [explicit SMTP encryption](configure-smtp.md) and restricted diagnostics.
 5. Optionally pass `processingLeaseSeconds` (default 300): how long a claimed row may stay `processing`

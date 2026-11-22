@@ -94,7 +94,8 @@ and [retry behavior](../book/retry-mechanism.md).
 
 **Unreleased.** The first constructor argument is `PDO|Closure(): PDO`. A factory must return a new
 exception-mode connection, and a `PDO` instance must be in exception error mode too (checked before every
-claim). On MySQL/MariaDB every worker connection must have autocommit enabled. A connection that fails
+claim). On MySQL/MariaDB every worker connection must have autocommit enabled (a `PDO` instance is
+checked before every claim, a factory connection when created). A connection that fails
 either check is rejected with `UnexpectedValueException` before any claim, and the worker never changes
 the setting. The factory is called on first use and only again after the server closed the
 connection, which the worker replaces before the claim transaction and once around each single status

@@ -114,7 +114,8 @@ claims a row again once it is older than the lease (default 300 seconds), as des
   may claim a row that an older one is still sending.
 - Pass a connection factory instead of a `PDO` instance so the worker can replace a closed connection.
 - Give the worker connections with autocommit enabled (the MySQL/MariaDB default). It now checks
-  `@@SESSION.autocommit` before its first claim and throws `UnexpectedValueException` when it is off.
+  `@@SESSION.autocommit` (on a `PDO` instance, before every claim) and throws `UnexpectedValueException`
+  when it is off.
 - Give the worker connections in exception error mode (`PDO::ERRMODE_EXCEPTION`, PHP's default). A
   `PDO` instance in `ERRMODE_SILENT` or `ERRMODE_WARNING` is now rejected with `UnexpectedValueException`
   before every claim.
