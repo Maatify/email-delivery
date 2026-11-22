@@ -51,8 +51,9 @@ repository records later publication facts; it does not replace the tag or chang
 | Observe an accepted keyed request | `EmailEnqueueReceiptReaderInterface::find(namespace, key)` | Scoped receipt or `null`; no recipient/context returned |
 
 Keyed enqueue atomically stores a job and its durable receipt. Repeating the same namespace/key and
-logical content returns the same receipt/job identity. It does **not** guarantee exactly-once SMTP,
-mailbox arrival, or automatic recovery of a worker interrupted after claiming a job.
+logical content returns the same receipt/job identity. It does **not** guarantee exactly-once SMTP or
+mailbox arrival. A job whose worker was interrupted after claiming it is claimed again once its
+processing lease expires, so it may be sent twice (at-least-once).
 
 ## Public Runtime API
 
@@ -131,6 +132,12 @@ indefinite receipt/key retention and recovery with the same key on a fresh conne
 `EmailQueueWorker::processBatch()` claims a bounded pending batch under row locks, commits the claim,
 then decrypts/renders and calls the transport outside that transaction. Run it from your application's
 supervised process using the [worker guide](docs/how-to/setup-worker.md).
+
+Unreleased (after 1.2.0): construct the worker with a connection factory, `Closure(): PDO`, so it can
+replace a connection the server closed while a send was running. A `processing` row whose lease
+expires (default 300 seconds, configurable) is claimed again; delivery is at-least-once. See the
+[processing lease](docs/book/worker.md#processing-lease) and
+[ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).
 
 Keyed jobs use database UTC for due/retry selection, retry deadlines and `sent_at`. NULL-token legacy
 jobs retain local database `NOW()` and PHP-local retry calculation. The worker supports pre-binding

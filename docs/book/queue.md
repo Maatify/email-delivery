@@ -23,9 +23,10 @@ Keyed schedule/timestamps are UTC. Legacy schedules retain their previous wall-c
 The worker's [per-row clock table](worker.md#clock-domains) explains mixed-table processing.
 Lower numeric priority sorts first, then ID; a batch limit bounds selection, not external delivery time.
 
-The worker only selects `pending` jobs whose schedule and optional retry deadline are due. Its state
-transition and operational failure boundaries are documented in [worker](worker.md); a receipt is not
-an SMTP delivery receipt or a mechanism to revive `processing` jobs.
+The worker selects `pending` jobs whose schedule and optional retry deadline are due, and `processing`
+jobs whose [processing lease](worker.md#processing-lease) has expired. Its state transition and
+operational failure boundaries are documented in [worker](worker.md); a receipt is not an SMTP delivery
+receipt or a mechanism to revive `processing` jobs.
 
 
 ## Separate inert storage

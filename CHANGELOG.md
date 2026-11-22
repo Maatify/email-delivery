@@ -7,6 +7,40 @@ Published dates below use the corresponding GitHub Release publication date in U
 
 ## [Unreleased]
 
+### Added
+- `EmailQueueWorker` accepts a connection factory, `Closure(): PDO`, as its first argument (#13). It
+  opens its connection on first use and replaces one the server closed: before the claim transaction,
+  and once around each single status statement after driver error 2006, 2013 or 4031. A `PDO` instance
+  is still accepted and cannot reconnect. See [ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md),
+  which awaits the owner's acceptance.
+- Processing lease (#13): a `processing` row whose `updated_at` is older than the lease is claimed
+  again by a later batch, under the attempt cap as a new attempt that is sent again. At the cap it is
+  settled `failed` with `processing_lease_expired`, without a send. The claim stamps the lease and
+  each row renews it right before its send. Default `EmailQueueWorker::DEFAULT_PROCESSING_LEASE_SECONDS`
+  (300 seconds); configurable through the optional `processingLeaseSeconds` argument.
+
+### Fixed
+- A send that outlasts the server's idle timeout no longer leaves its row `processing` forever, and
+  the following batches no longer fail on the closed connection (#13).
+- A failed `sent` write no longer reschedules (`pending`) or fails (`failed`, at the last attempt) a
+  message that was already sent. It is logged as `Email sent but status write failed` and the row is
+  left to its lease. A connection still lost after one reconnect is rethrown and stops the batch;
+  any other error continues with the next row.
+- Retry/failed writes are fenced by attempt, so a stale attempt never overwrites a newer outcome.
+
+### Compatibility and limits
+- Semantic versioning: additive and backward compatible within 1.x (a minor release). The first
+  parameter keeps its name and position and widens to `PDO|Closure`; a trailing optional parameter
+  and a public constant are added. The class stays `final` and is no longer declared `readonly`.
+- Delivery is at-least-once: a message may be sent twice when its `sent` status cannot be recorded
+  even after one reconnect, or when one render and send outlasts the lease.
+- No schema change. Rows left `processing` by an earlier version become claimable on the first
+  upgraded batch and may be sent again; review them first, and do not run older and newer workers on
+  the same table. Each row now costs two more statements (lease renewal and ownership read).
+- The worker now writes `updated_at` when it claims a row and before each send. External scripts that
+  select stale `processing` rows by `updated_at` therefore measure from the claim or renewal, not from
+  enqueue time.
+
 <a id="120"></a>
 
 ## [1.2.0] - 2026-11-06

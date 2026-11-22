@@ -60,8 +60,24 @@ Deleting queue rows does not authorize deletion of receipts, key reuse or a repl
 A code rollback must not remove receipts or the queue binding. Old legacy inserts omit the nullable
 column, but an old worker lacks keyed UTC timing: assess/drain or run it with explicitly consistent UTC
 DB/PHP settings before letting it process existing keyed jobs. Do not run an automatic down migration
-that drops durable identities, and do not bulk reset `processing` rows: the package has no built-in
-reclaim/recovery policy for them. Investigate acceptance/SMTP ambiguity before an operator acts.
+that drops durable identities, and do not bulk reset `processing` rows. Investigate acceptance/SMTP
+ambiguity before an operator acts.
+
+## Worker processing lease (Unreleased)
+
+No SQL change is needed. The upgraded worker stamps and renews `updated_at` on `processing` rows and
+claims a row again once it is older than the lease (default 300 seconds), as described in the
+[processing lease](book/worker.md#processing-lease). Before upgrading:
+
+- Review rows already `processing`. Their `updated_at` is their enqueue time, so the first upgraded
+  batch claims the stale ones again: under the attempt cap they are sent again, at the cap they are
+  settled `failed` with `processing_lease_expired`.
+- Stop every older worker first. Older workers neither stamp nor renew the lease, so an upgraded worker
+  may claim a row that an older one is still sending.
+- Pass a connection factory instead of a `PDO` instance so the worker can replace a closed connection.
+
+Rolling back to an older worker removes reconnects and the lease; rows left `processing` then need an
+operator decision again.
 
 
 ## Optional synthetic recording

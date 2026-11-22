@@ -45,5 +45,5 @@
   <text class="label" x="805.0" y="444">SMTP transport</text>
   <text class="sub" x="805.0" y="464">Returned call is not mailbox proof</text>
   <text class="sub" x="805.0" y="480">Retries may send again</text>
-  <text class="sub" x="480" y="540">Queue acceptance is not exactly-once SMTP. No automatic processing reclaimer.</text>
+  <text class="sub" x="480" y="540">Queue acceptance is not exactly-once SMTP. Expired processing leases are claimed again.</text>
 </svg>

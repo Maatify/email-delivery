@@ -1,6 +1,7 @@
 # Documentation
 
-This documentation describes the published [1.2.0 release](../CHANGELOG.md#120).
+This documentation describes the published [1.2.0 release](../CHANGELOG.md#120) plus the unreleased
+worker changes listed under [Unreleased](../CHANGELOG.md#unreleased).
 See the [publication record](releases/1.2.0-publication.md) for qualification and Composer integrity evidence.
 
 ## Canonical consumer entry points
@@ -28,6 +29,7 @@ See the [publication record](releases/1.2.0-publication.md) for qualification an
 - [Historical ADR-008](ADR-008-Email-Delivery-Independent-Queue.md): locked independent-channel decision
 - [ADR-011](ADR-011-Synthetic-Email-Recording.md): isolated synthetic recording without delivery
 - [ADR-010](ADR-010-Idempotent-Email-Enqueue.md): extension published in 1.2.0 for keyed acceptance
+- [ADR-012](ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md): unreleased worker reconnect and processing lease; awaiting owner acceptance
 
 The idempotency reference owns the detailed request/receipt rules. The upgrade guide owns SQL adoption.
 Other pages link to those contracts rather than define alternative retry, retention or authentication policy.

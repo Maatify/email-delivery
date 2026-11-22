@@ -123,5 +123,6 @@ cannot make the original receipt appear sent. After purge, replay returns `queue
 recreating the job. Missing is never inferred sent or unaccepted.
 
 The guarantee is one accepted/enqueued job for an explicit request identity under this retention
-contract. It does not guarantee exactly-once SMTP or repair interrupted `processing` jobs. HTTP
+contract. It does not guarantee exactly-once SMTP; the worker's [processing lease](../book/worker.md#processing-lease)
+retries interrupted `processing` jobs at-least-once. HTTP
 idempotency, caller durable intent and external status receipts require adoption outside this package.
