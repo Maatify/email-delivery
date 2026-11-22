@@ -30,6 +30,14 @@ which scheduled a second send of a message that had already been sent.
    synthetic adapters make. A connection with autocommit off is rejected with `UnexpectedValueException`
    before anything is claimed or written. The worker never changes the setting. The session time zone is
    not required, because legacy rows use the database-local `NOW()`.
+   Every worker connection must be in exception error mode (`PDO::ERRMODE_EXCEPTION`). In
+   `ERRMODE_SILENT` or `ERRMODE_WARNING`, `PDOStatement::execute()` returns `false` instead of throwing,
+   so a failed `sent` write was logged as `Email sent` and a failed lease renewal still led to a send
+   (both reproduced on MySQL and MariaDB with a trigger that fails the statement after it prepared). A
+   factory connection is checked when it is created; a `PDO` instance before every claim, because the
+   application owns it and can change its mode. Another mode is rejected with `UnexpectedValueException`
+   before anything is claimed; the worker never changes the mode. The keyed and synthetic adapters
+   already require the same, and the 1.2.0 setup guide asked for an exception-mode connection.
 2. **One reconnect, only around statements that are safe to repeat.** These are autocommit statements
    outside any transaction: the per-row lease renewal and ownership read, the `sent` write, and the
    retry/failed writes with the keyed retry-clock read. On driver code 2006 (server has gone away), 2013
@@ -76,8 +84,13 @@ which scheduled a second send of a message that had already been sent.
      row. The row stays `processing` for its lease. A failed retry/failed write is logged as
      `Email job failure was not recorded`.
 5. **Processing lease in the claim (owner decision: at-least-once).** The claim selects due `pending`
-   rows and `processing` rows whose `updated_at` is older than the lease. It never locks a `processing`
-   row whose lease has not expired, nor a `pending` row that is not due yet:
+   rows and `processing` rows whose `updated_at` is older than the lease. It locks only its candidates,
+   the rows that were expired or due when it read them without locks; a row that was not a candidate at
+   that read (a `processing` row with a current lease, a `pending` row not yet due) is never locked. A
+   candidate that another worker claimed or renewed, or the application rescheduled, between that read
+   and the lock fails the re-check: under REPEATABLE READ (the default) it stays locked until the claim
+   transaction ends, before any send, and under READ COMMITTED InnoDB releases it right after the
+   re-check (measured on both engines). It is neither claimed nor sent.
    - **Candidates:** two unlocked reads of ids, expired leases and due `pending` rows, each in
      `(priority, id)` order with the batch limit.
    - **One locking read** of only those rows, by primary key (forced to `PRIMARY`) in id order, that
@@ -195,6 +208,9 @@ which scheduled a second send of a message that had already been sent.
   matches no row costs one more read. Each worker connection costs one autocommit read when first used.
 - `PDO` instance users whose connection has autocommit off now get `UnexpectedValueException` before
   any claim, where 1.2.0 ran on with uncommitted status writes.
+- `PDO` instance users whose connection is not in exception error mode (`ERRMODE_SILENT` or
+  `ERRMODE_WARNING`, which PHP 8 only uses when set explicitly) now get `UnexpectedValueException` before
+  any claim, where 1.2.0 ran on and lost failed status writes without notice.
 - Semantic versioning: additive and backward compatible within 1.x, so a minor release. The first
   parameter keeps its name and position and widens to a union. One optional trailing parameter and one
   public constant are added. The class stays `final` and is no longer declared `readonly`. The lease,
@@ -227,6 +243,9 @@ The repository test `EmailQueueWorkerReconnectMysqlTest` runs against real MySQL
   on the repeat after a reconnect, plus a first-try write that never reads the row back;
 - connections without autocommit, from a factory (attribute or init command), on reconnect, or as a
   plain `PDO`;
+- a plain `PDO` in `ERRMODE_SILENT` whose `sent` write or lease renewal fails after it prepared (a
+  trigger): nothing is claimed, sent or reported as sent; a plain `PDO` switched to silent mode between
+  batches is refused before the next claim;
 - the claim reading each status in index order, locking about a batch while finished rows stay writable;
 - the claim taking no lock on 40 fresh in-flight rows, and a concurrent outcome write on an in-flight
   row never deadlocking with it (three connections);
@@ -235,8 +254,8 @@ The repository test `EmailQueueWorkerReconnectMysqlTest` runs against real MySQL
   wait;
 - expired, fresh and pending rows together: the locking read uses `PRIMARY`, locks exactly the
   candidates' primary keys and claims the expired rows, and no outcome write on a fresh row waits;
-- candidates renewed or rescheduled between the unlocked read and the lock are not taken, and two
-  claims never take the same expired row;
+- candidates renewed or rescheduled between the unlocked read and the lock are not taken, stay locked
+  only until the claim transaction ends, and two claims never take the same expired row;
 - a failure reason cut inside a multibyte character, including on a lost-acknowledgement repeat;
 - a `TIMESTAMP` lease across daylight saving spring-forward and fall-back in `America/New_York`, for the
   claim, renewal and `ON UPDATE` stamps;

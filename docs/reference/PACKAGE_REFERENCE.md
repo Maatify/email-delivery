@@ -93,9 +93,10 @@ escape; do not infer that every worker failure is swallowed. See [worker](../boo
 and [retry behavior](../book/retry-mechanism.md).
 
 **Unreleased.** The first constructor argument is `PDO|Closure(): PDO`. A factory must return a new
-exception-mode connection. On MySQL/MariaDB every worker connection must have autocommit enabled; a
-connection without it is rejected with `UnexpectedValueException` before any claim, and the worker
-never changes the setting. The factory is called on first use and only again after the server closed the
+exception-mode connection, and a `PDO` instance must be in exception error mode too (checked before every
+claim). On MySQL/MariaDB every worker connection must have autocommit enabled. A connection that fails
+either check is rejected with `UnexpectedValueException` before any claim, and the worker never changes
+the setting. The factory is called on first use and only again after the server closed the
 connection, which the worker replaces before the claim transaction and once around each single status
 statement (driver errors 2006, 2013, 4031). The claim transaction is never retried. A `PDO` instance
 cannot reconnect. The optional `processingLeaseSeconds` (default `DEFAULT_PROCESSING_LEASE_SECONDS`, 300,

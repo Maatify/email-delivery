@@ -19,10 +19,12 @@ Published dates below use the corresponding GitHub Release publication date in U
   each row renews it right before its send. Default `EmailQueueWorker::DEFAULT_PROCESSING_LEASE_SECONDS`
   (300 seconds); configurable through the optional `processingLeaseSeconds` argument.
   - The claim reads its candidates without locks (expired leases and due `pending` rows), then locks
-    only those rows, by primary key in one statement, re-checking them on their latest version. It never
-    locks a `processing` row whose lease has not expired, nor a row that is not due yet, so outcome
-    writes on in-flight rows, reschedules and enqueues do not wait for it. Under at-least-once delivery,
-    a row whose lease expired while its first send was still running can be locked and claimed again.
+    only those rows, by primary key in one statement, re-checking them on their latest version. A row
+    that was not a candidate at that read (a `processing` row with a current lease, a row not yet due) is
+    never locked, so outcome writes on in-flight rows, reschedules and enqueues do not wait for it. A
+    candidate renewed, claimed or rescheduled between the read and the lock is locked until the claim
+    transaction ends, but not claimed. Under at-least-once delivery, a row whose lease expired while its
+    first send was still running can be locked and claimed again.
   - On a `TIMESTAMP` `updated_at` (some application schemas) the lease is compared as instants and
     stamped exactly, so session zones, daylight saving changes and `ON UPDATE CURRENT_TIMESTAMP` stamps
     do not move it. On MySQL before 8.0.19, use a fixed-offset or UTC session zone. A `DATETIME` column
@@ -32,7 +34,8 @@ Published dates below use the corresponding GitHub Release publication date in U
   read walks its status in index order and stops at the batch limit, instead of scanning the table.
   On a 100,000-row mixed table a 50-row claim's reads take 7–9 ms with it and 50–56 ms without it; either
   way it locks only its candidates. See the [worker book](docs/book/worker.md#claim-index-and-locks).
-- The worker checks that each MySQL/MariaDB connection has autocommit enabled before using it (#13).
+- The worker checks that each MySQL/MariaDB connection has autocommit enabled, and that each connection
+  is in exception error mode, before using it (#13).
 
 ### Fixed
 - A send that outlasts the server's idle timeout no longer leaves its row `processing` forever, and
@@ -77,6 +80,10 @@ Published dates below use the corresponding GitHub Release publication date in U
   the same table. Each row now costs two more statements (lease renewal and ownership read).
 - `PDO` instance users whose connection has autocommit off now get `UnexpectedValueException` before
   any claim. Factory connections are checked the same way, and the worker never changes the setting.
+- `PDO` instance users whose connection is not in exception error mode (`ERRMODE_SILENT` or
+  `ERRMODE_WARNING`) now get `UnexpectedValueException` before every claim. In those modes a failed
+  status write or lease renewal went unnoticed, so a message could be reported sent without being
+  recorded. PHP 8 defaults to exception mode, and the 1.2.0 setup guide already asked for it.
 - The worker now writes `updated_at` when it claims a row and before each send. External scripts that
   select stale `processing` rows by `updated_at` therefore measure from the claim or renewal, not from
   enqueue time.

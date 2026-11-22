@@ -10,10 +10,15 @@ still works but cannot reconnect. On MySQL/MariaDB every worker connection needs
 (the server default): its status writes must commit on their own. The worker checks
 `@@SESSION.autocommit` on each factory connection when it is created, and on a `PDO` instance once
 before its first claim, and throws `UnexpectedValueException` before claiming or writing anything when it
-is off. It never changes the setting. The worker's transaction ownership differs from the guarded
+is off. It never changes the setting. Every worker connection must also report failures by exception
+(`PDO::ERRMODE_EXCEPTION`, PHP's default): under `ERRMODE_SILENT` or `ERRMODE_WARNING` a failed status
+write or lease renewal only returns `false`, and the worker could report a send it never recorded. A
+factory connection in another mode is rejected when it is created, and a `PDO` instance is checked before
+every claim, because the application can change its mode; either way `UnexpectedValueException` comes
+before anything is claimed. The worker never changes the mode. The worker's transaction ownership differs from the guarded
 [keyed enqueue ports](../reference/idempotency.md); do not wrap a worker batch in a caller transaction.
 
-1. Check autocommit (see above). With a factory, confirm the connection with `SELECT 1` and replace it
+1. Check the error mode and autocommit (see above). With a factory, confirm the connection with `SELECT 1` and replace it
    if the server closed it.
 2. Begin a transaction and discover queue columns with `SELECT * ... LIMIT 0` result metadata.
 3. Read, without locks, the ids of `processing` rows whose [processing lease](#processing-lease) has
@@ -95,14 +100,16 @@ Apply [`005_email_queue_claim_index.sql`](../../schema/mysql/005_email_queue_cla
 `idx_email_queue_claim (status, priority, id)` online. An existing index led by `(status, priority, id)`
 serves the same purpose, and 005 is then unnecessary.
 
-The claim never locks a `processing` row whose lease has not expired, nor a `pending` row that is not
-due yet:
+The claim locks only its candidates: the rows that were `processing` with an expired lease, or `pending`
+and due, when it read them without locks. A row that was not a candidate at that read is never locked,
+such as a `processing` row whose lease was current or a `pending` row that was not due yet. A candidate
+can still change before the lock (see step 2 and [what waits](#what-waits-for-an-open-claim)):
 1. **Candidates, without locks.** Two reads return ids only: `processing` rows whose lease has expired,
    and due `pending` rows. Each walks its status in `(priority, id)` order and stops at the batch limit.
 2. **One locking read, by primary key.** Only the candidates are locked, in id order, through the
    primary key. The read re-checks "due `pending`, or expired lease" on each row's latest version. A
-   candidate that another worker claimed or renewed meanwhile, or that the application rescheduled, is not
-   taken.
+   candidate that another worker claimed or renewed meanwhile, or that the application rescheduled, is
+   locked by this read but neither claimed nor sent.
 3. **The first rows by priority/ID,** up to the batch limit.
 
 A locking scan would not work. Under REPEATABLE READ, a locking read locks every index entry it walks
@@ -146,11 +153,15 @@ with batch limits 1 and 50:
 | A locking `pending` scan (before this change) | 1,008–2,005; 3 where an index led by `(status, retry_after)` served it | reschedules of those rows and enqueues; with that index, every enqueue |
 | This version | 1, the due row's primary key | only writes to the due row itself |
 
-What waits for an open claim, and what does not:
-- **Never waits:** writes to rows that are not candidates, including outcome writes on in-flight rows,
-  rows that are not due yet and finished rows, and enqueues at any priority.
-- **Waits until the claim commits** (a few milliseconds, before any send): writes to its candidates. That
-  includes a candidate whose re-check failed, because InnoDB keeps the lock it took to read the row.
+### What waits for an open claim
+
+- **Never waits:** writes to rows that were not candidates, including outcome writes on in-flight rows
+  with a current lease, rows that are not due yet and finished rows, and enqueues at any priority.
+- **Waits until the claim transaction ends:** writes to its candidates. That includes a candidate that
+  changed between the unlocked read and the lock and failed the re-check: under REPEATABLE READ (the
+  default) InnoDB keeps the lock it took to read the row until the claim transaction ends; under READ
+  COMMITTED it releases that lock right after the re-check (measured on MySQL 8.0 and MariaDB 11.4). The
+  claim transaction ends right after its status updates, before any render or send.
 
 The locking read locks only the candidate rows, by their primary-key records. When a candidate is the
 first record on its page, MySQL can also take a next-key lock on the previous page's boundary, because
