@@ -509,15 +509,17 @@ final class EmailQueueWorker
     {
         $held = [];
         $previous = null;
+        // Registered for every level so the scope stays transparent: only an engine E_WARNING with a
+        // disconnect symptom is held; anything else goes to the application's handler as if this one were
+        // not there, and only that handler's explicit false hands it on to PHP's standard handler.
         $previous = set_error_handler(
             static function (int $level, string $message, string $file = '', int $line = 0) use (&$held, &$previous): bool {
-                if (self::isDisconnectWarning($message)) {
+                if ($level === E_WARNING && self::isDisconnectWarning($message)) {
                     $held[] = $message;
                     return true;
                 }
-                return is_callable($previous) && (bool) $previous($level, $message, $file, $line);
-            },
-            E_WARNING
+                return is_callable($previous) && $previous($level, $message, $file, $line) !== false;
+            }
         );
         try {
             return $operation();

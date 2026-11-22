@@ -160,6 +160,57 @@ final class EmailQueueWorkerConnectionContractTest extends TestCase
         self::assertStringContainsString('unrelated-fixture', $outer[0][1]);
     }
 
+    public function testAnApplicationHandlerThatReturnsNothingHandlesAnUnrelatedWarningOnlyOnce(): void
+    {
+        $received = [];
+        error_clear_last();
+        // A handler that returns nothing is common in applications; PHP treats only an explicit false as unhandled.
+        /** @phpstan-ignore argument.type */
+        set_error_handler(static function (int $level, string $message) use (&$received): void {
+            $received[] = [$level, $message];
+        });
+        try {
+            self::onPossiblyClosedConnection(static function (): void {
+                self::raiseWarning('unrelated-fixture');
+            });
+        } finally {
+            restore_error_handler();
+        }
+
+        self::assertCount(1, $received);
+        self::assertSame(E_WARNING, $received[0][0]);
+        self::assertNull(error_get_last(), "PHP's standard handler must not report a warning the application handled.");
+    }
+
+    public function testOtherErrorLevelsRaisedDuringTheStatementsReachTheApplicationHandler(): void
+    {
+        $outer = $this->outerWarnings(static function (): void {
+            self::onPossiblyClosedConnection(static function (): void {
+                trigger_error('fixture notice', E_USER_NOTICE);
+            });
+        });
+
+        self::assertSame([[E_USER_NOTICE, 'fixture notice']], $outer);
+    }
+
+    public function testOnlyAnEngineWarningIsHeldBack(): void
+    {
+        $outer = $this->outerWarnings(function (): void {
+            try {
+                self::onPossiblyClosedConnection(static function (): never {
+                    // Same wording as a driver symptom, but raised by application code: never held or dropped.
+                    trigger_error('fixture: Packets out of order', E_USER_WARNING);
+                    $lost = new PDOException('Fixture lost connection');
+                    $lost->errorInfo = ['HY000', 2006, 'Fixture'];
+                    throw $lost;
+                });
+            } catch (PDOException) {
+            }
+        });
+
+        self::assertSame([[E_USER_WARNING, 'fixture: Packets out of order']], $outer);
+    }
+
     /** @param \Closure(): mixed $operation */
     private static function onPossiblyClosedConnection(\Closure $operation): mixed
     {

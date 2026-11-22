@@ -34,7 +34,8 @@ which scheduled a second send of a message that had already been sent.
    Before PHP 8.4, mysqlnd also raises a `Packets out of order` warning when it reads that disconnect.
    While these statements run, such warnings are held back so an application handler that converts
    warnings into exceptions cannot mask the `PDOException`. They are dropped once the loss is confirmed
-   and logged, and raised again otherwise.
+   and logged, and raised again otherwise. Every other error, at any level, goes to the application's
+   handler unchanged.
 3. **Never around a transaction.** The claim is never retried. Before `beginTransaction()` the worker
    checks its connection with `SELECT 1` and replaces it if the server closed it; nothing has run yet.
 4. **A send is never followed by a retry write.** After a successful send, a failed `sent` write never

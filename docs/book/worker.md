@@ -68,7 +68,8 @@ Before PHP 8.4, the MySQL driver also raises a PHP warning such as `Packets out 
 the server's disconnect. While these statements run, the worker holds such warnings back, so an
 application handler that turns warnings into exceptions cannot hide the lost connection. A held warning
 is dropped when the connection loss is confirmed; the worker logs that loss itself. Otherwise the
-warning is raised again as `E_USER_WARNING`. Any other warning reaches your error handler unchanged.
+warning is raised again as `E_USER_WARNING`. Every other error, at any level, reaches your error handler
+unchanged, and PHP's own handler runs only when yours returns `false`.
 
 ## Failure and recovery limits
 
