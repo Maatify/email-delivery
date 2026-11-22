@@ -202,22 +202,23 @@ The candidate reads use the claim index from `005`, led by `(status, priority, i
 scoped read walks every row of its status that is ahead of its type in that order until it finds `$limit`
 rows of its type. That costs time, not locks, and it grows with the backlog of other types. Measured on the
 package schema with 005, one scoped due-candidate read (the worker's statement, byte comparison included)
-behind due rows of another type, median of seven runs:
+behind due rows of another type. Figures are rounded medians of seven runs; two runs of the same statement
+agreed within 5%:
 
 | Other-type due rows ahead | MySQL 8.0.46 | MariaDB 11.4 |
 | --- | --- | --- |
-| 5,000 | 4 ms | 11 ms |
-| 20,000 | 12 ms | 43 ms |
-| 50,000 | 30 ms | 105 ms |
-| 100,000 | 60 ms | 213 ms |
+| 5,000 | about 4 ms | about 11 ms |
+| 20,000 | about 12 ms | about 43 ms |
+| 50,000 | about 30 ms | about 105 ms |
+| 100,000 | about 60 ms | about 210 ms |
 
 [`006_email_queue_entity_type_claim_index.sql`](../../schema/mysql/006_email_queue_entity_type_claim_index.sql)
 adds `idx_email_queue_claim_entity_type (status, entity_type, priority, id)`, so each scoped read walks only
 its own type: under 1 ms in every case above. With a case-insensitive collation the index lookup also
 visits look-alike types (`Admin` for `admin`), which the byte comparison then drops. Apply it after 005 only
-if you run scoped batches behind a large backlog of other types. `processBatch()` keeps using 005 (measured), and every status change then maintains
-one more index entry. A table that already has an index led by `(status, entity_type, priority, id)` does
-not need it.
+if you run scoped batches behind a large backlog of other types. `processBatch()` keeps using 005
+(measured), and every status change then maintains one more index entry. A table that already has an index
+led by `(status, entity_type, priority, id)` does not need it.
 
 ## Lost connections
 
