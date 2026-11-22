@@ -68,12 +68,16 @@ ambiguity before an operator acts.
 ## Worker claim index (Unreleased)
 
 Apply [`005_email_queue_claim_index.sql`](../schema/mysql/005_email_queue_claim_index.sql) **once** to
-every installation, fresh or existing, after its earlier files. It adds `idx_email_queue_claim (status,
+every installation, fresh or existing, after its earlier files. A table that already has an index led by
+`(status, priority, id)` does not need it. It adds `idx_email_queue_claim (status,
 priority, id)` with `ALGORITHM=INPLACE, LOCK=NONE`, so the table stays readable and writable while the
 index is built. Like 003, it is not idempotent: if the index already exists, do not run it again.
 
-Without it the claim's locking read scans and locks the whole table, as 1.2.0 already does; with it the
-claim reads and locks only `pending` and `processing` rows. The worker works either way. Measured
+Without such an index each of the claim's two locking reads scans and locks the whole table; with it each
+read walks its status in index order and stops at the batch limit. The worker works either way.
+
+An application-owned table whose `updated_at` is a `TIMESTAMP` (for example with `ON UPDATE
+CURRENT_TIMESTAMP`) is supported: the worker detects the type and runs the lease on `NOW()` for every row. Measured
 figures and what still waits are in the [worker book](book/worker.md#claim-index-and-locks).
 
 ## Worker processing lease (Unreleased)

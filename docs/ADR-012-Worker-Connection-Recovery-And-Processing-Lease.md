@@ -67,9 +67,19 @@ which scheduled a second send of a message that had already been sent.
      row. The row stays `processing` for its lease. A failed retry/failed write is logged as
      `Email job failure was not recorded`.
 5. **Processing lease in the claim (owner decision: at-least-once).** The claim selects due `pending`
-   rows and `processing` rows whose `updated_at` is older than the lease, compared with the row's own
-   clock: `UTC_TIMESTAMP()` for keyed rows, `NOW()` for legacy rows. It reads through the claim index
-   `idx_email_queue_claim (status, priority, id)`, added by schema 005. The claim stamps `updated_at`, and
+   rows and `processing` rows whose `updated_at` is older than the lease. It does so in one locking read
+   per status, each in `(priority, id)` order with the batch limit, then keeps the first rows of both. With
+   `idx_email_queue_claim (status, priority, id)` from schema 005, or an existing index led by those
+   columns, each read walks its status in index order and stops at the limit.
+   The lease clock follows the type of `updated_at`, read from the column metadata in every batch:
+   - **`DATETIME`** (the package schema): the row's own clock, `UTC_TIMESTAMP()` for keyed rows and
+     `NOW()` for legacy rows.
+   - **`TIMESTAMP`** (some application schemas): `NOW()` for every row. A TIMESTAMP holds an instant and
+     converts it by session zone, so writing `UTC_TIMESTAMP()` into it would store the UTC wall clock read
+     in the session zone. A worker in another zone, or a stamp from `ON UPDATE CURRENT_TIMESTAMP`, would
+     then be off by the zone offset.
+
+   The claim stamps `updated_at`, and
    each row renews it right before it is rendered and sent. A stale row under the attempt cap is claimed
    as a new attempt and sent again. A stale row at the cap is settled `failed` with
    `processing_lease_expired`, without a send.
@@ -99,21 +109,28 @@ which scheduled a second send of a message that had already been sent.
   cannot be recorded even after one reconnect, or when one render and send outlasts the lease. Size the
   lease as item 7 describes.
 - One additive schema file, `005_email_queue_claim_index.sql`. It adds the claim index online
-  (`ALGORITHM=INPLACE, LOCK=NONE`) and applies to every installation, fresh or existing. The worker works
-  without it, but its claim then scans and locks the whole table, as 1.2.0 already does.
+  (`ALGORITHM=INPLACE, LOCK=NONE`) and applies to every installation that has no index led by
+  `(status, priority, id)`. Without such an index each of the two claim reads scans and locks the whole
+  table, which is twice 1.2.0's single scan.
   - **Measured** on a 100,000-row table (90% `sent`, 8% `failed`, 1.5% `pending`, 0.5% `processing`),
-    MySQL 8.0.46 and MariaDB 11.4 under REPEATABLE READ, 50-row batch:
-    - without the index: a full scan with 100,825 rows locked, a claim transaction of about 55–75 ms,
-      and every concurrent write waits, enqueue included;
-    - with it: a range read locking only the 2,000 pending and processing rows (4,005 locks), a claim
-      transaction of about 7–9 ms, and writes to finished rows do not wait.
-  - **Still waiting** until the claim commits: a concurrent INSERT, because of gap locks under
-    REPEATABLE READ, and writes to other `pending` or `processing` rows.
+    MySQL 8.0.46 and MariaDB 11.4 under REPEATABLE READ, 50-row batch.
+  - **Package schema:**
+    - 1.2.0: a full scan locking 100,825 rows in 56–68 ms.
+    - This version without the index: about 100–130 ms.
+    - With 005: two ordered index reads, locking 632–640 rows in 11–13 ms, so writes to finished rows
+      and enqueues at a normal priority do not wait.
+  - **An application schema that already has the index:** 1.2.0 locked 148–150 rows in about 4 ms; this
+    version locks 633–641 in 8.5–11 ms, because the `processing` read walks the in-flight rows.
+  - A single `pending OR processing` read was rejected: it needs a filesort over every active row, so it
+    locked all of them (4,003–4,005), blocked enqueues and was slower.
+  - **Still waiting** until the claim commits: an INSERT at the end of the `pending` range (the lowest
+    priority), and on MariaDB a write to another in-flight `processing` row read by the claim.
 - For a `processing` row, `updated_at` now holds the worker-maintained lease time.
   It matches each writer's clock: `NOW()` for legacy rows and the UTC acceptance time for keyed rows.
   External scripts that select stale rows by `updated_at` now measure from the claim or renewal.
-- Rows left `processing` by an earlier version keep their enqueue-time `updated_at`. The first upgraded
-  batch claims the stale ones again and may send them a second time; review them before upgrading. Do
+- Rows left `processing` by an earlier version keep their enqueue-time `updated_at` on a `DATETIME`
+  column; a `TIMESTAMP ... ON UPDATE CURRENT_TIMESTAMP` column already holds their claim time. The first
+  upgraded batch claims the stale ones again and may send them a second time; review them before upgrading. Do
   not run older and newer workers on the same table: older workers neither stamp nor renew the lease.
 - The worker changes no session setting on any connection. Session settings belong to the factory.
 - Every row costs two more statements: the renewal and the ownership read. A retry/failed write that
@@ -150,7 +167,10 @@ The repository test `EmailQueueWorkerReconnectMysqlTest` runs against real MySQL
   renewal writes;
 - connections without autocommit, from a factory (attribute or init command), on reconnect, or as a
   plain `PDO`;
-- the claim reading through the claim index while finished rows stay writable;
+- the claim reading each status in index order, locking about a batch while finished rows stay writable;
+- a `TIMESTAMP` `updated_at` in `+03:00` and `-05:00` sessions: fresh rows are never reclaimed from another
+  zone, the lease boundary holds for keyed and legacy rows, and rows an older worker claimed (stamped
+  by `ON UPDATE CURRENT_TIMESTAMP`) are judged by that stamp;
 - the lease boundaries for both clocks in a non-UTC session;
 - the settlement at the cap;
 - the per-row renewal, including a renewal within the claim's second;
