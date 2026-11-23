@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Maatify\EmailDelivery\Documentation\Examples;
 
+// This example follows the unpublished 1.3.0 candidate; its connection recovery and processing lease
+// are not available in the published 1.2.0 package.
+
 use Closure;
 use Maatify\Crypto\Contract\CryptoContextProviderInterface;
 use Maatify\Crypto\DX\CryptoProvider;
