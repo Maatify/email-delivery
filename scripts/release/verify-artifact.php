@@ -17,7 +17,7 @@ try {
     ensure(!$dirty || $allowDirty, 'Commit the candidate first, or explicitly use --allow-dirty for a non-qualifying rehearsal.');
     verifyIdentity($root, $target);
     $sha = trim(run(['git', 'rev-parse', 'HEAD'], $root));
-    if (($targetMetadata['publication_state_current'] ?? 'unpublished') === 'published') {
+    if (($targetMetadata['publication_state_in_this_snapshot'] ?? 'unpublished') === 'published') {
         require_once __DIR__ . '/verify-published-snapshot.php';
         verifyPublishedSnapshot($root, $directory, $target, $sha, $dirty);
         exit(0);

@@ -2,7 +2,7 @@
 
 [Guides](README.md) · [Lifecycle and clocks](../book/worker.md) · [Typed composition](../examples/worker-runner.php)
 
-This guide describes the prepared 1.3.0 source. Connection recovery, processing leases and entity-type
+This guide describes the 1.3.0 source. Connection recovery, processing leases and entity-type
 scoped batches are not included in the published 1.2.0 package.
 
 `EmailQueueWorker` processes one batch when the application calls `processBatch()`. There is no
@@ -29,7 +29,7 @@ defines dependency-taking functions and does nothing at include time.
 6. Call `processBatch(50)` from your application's supervised process. Select batch size/polling/supervision
    in the application.
 7. For a worker dedicated to one entity type in a shared queue, call `processBatchByEntityType('admin', 50)`
-   instead (prepared for 1.3.0; unpublished). Every type, and rows without a type, still need a worker: a scoped batch only
+   instead (introduced in 1.3.0). Every type, and rows without a type, still need a worker: a scoped batch only
    reclaims leases of its own type, and only `processBatch()` takes rows whose `entity_type` is NULL.
    Behind a large backlog of other types, apply the optional [schema 006](../upgrade.md#scoped-batch-index-006).
 

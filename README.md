@@ -21,10 +21,10 @@ transport through PHPMailer. Applications enqueue work; a separately run worker 
 
 ---
 
-Release artifact target: **1.3.0**. Publication state: **unpublished**.
-The latest published version remains [1.2.0](https://github.com/Maatify/email-delivery/releases/tag/v1.2.0),
-published on 2026-11-06 UTC and verified as an exact Composer dist installation. This branch prepares
-1.3.0; it does not make that version available from Packagist or change the immutable 1.2.0 artifact.
+Release artifact target: **1.3.0**. Publication state **at qualification**: **unpublished**.
+The latest externally published version **at qualification** is [1.2.0](https://github.com/Maatify/email-delivery/releases/tag/v1.2.0),
+published on 2026-11-06 UTC and verified as an exact Composer dist installation. These publication facts are a qualification snapshot;
+they do not assert the package's availability after qualification.
 
 ## Start here
 
@@ -49,7 +49,7 @@ published on 2026-11-06 UTC and verified as an exact Composer dist installation.
 
 Keyed enqueue atomically stores a job and its durable receipt. Repeating the same namespace/key and
 logical content returns the same receipt/job identity. It does **not** guarantee exactly-once SMTP or
-mailbox arrival. In the prepared, unpublished 1.3.0 candidate, a job whose worker was interrupted after
+mailbox arrival. In 1.3.0, a job whose worker was interrupted after
 claiming it is claimed again once its processing lease expires, so it may be sent twice (at-least-once).
 Published 1.2.0 does not include that lease recovery behavior.
 
@@ -73,13 +73,13 @@ DTO fields, enum values, exceptions and behavioral boundaries. Internal helpers 
 composer require maatify/email-delivery:1.3.0
 ```
 
-Run that exact install command **only after 1.3.0 is published**. Until then, install the latest published
-version with `composer require maatify/email-delivery:1.2.0`. The unpinned command
-`composer require maatify/email-delivery` also resolves to the latest version Packagist currently offers.
+Run that exact install command when 1.3.0 is available from Packagist. At qualification, install
+`composer require maatify/email-delivery:1.2.0`. The unpinned command
+`composer require maatify/email-delivery` resolves to the version Packagist offers at install time.
 
-The 1.3.0 candidate requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer (6.9+ or 7), PSR-3 logging and
+Version 1.3.0 requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer (6.9+ or 7), PSR-3 logging and
 `symfony/polyfill-mbstring` (`mb_strcut` without the mbstring extension). Published 1.2.0 requires PHPMailer `^6.9`
-and does not declare the polyfill directly; these candidate dependency changes are not part of 1.2.0.
+and does not declare the polyfill directly; these dependency changes are not part of 1.2.0.
 The production keyed and synthetic storage paths use MySQL/MariaDB with `pdo_mysql` and the package-owned
 [SQL files](schema/mysql). SQLite is used by legacy tests, not supported as keyed production storage.
 Supply your application PDO, crypto provider/context provider, renderer, transport and logger through DI.
@@ -87,10 +87,10 @@ Monolog is not a package dependency.
 
 Apply the [schema installation/upgrade](docs/upgrade.md) before adopting the keyed API. Do not run
 all numbered SQL files on a fresh installation: the binding upgrade is for an existing legacy table.
-The 1.3.0 candidate's worker claim index (`005`): fresh installs run 001, 002, then 005; legacy tables
+The 1.3.0 worker claim index (`005`): fresh installs run 001, 002, then 005; legacy tables
 without `enqueue_receipt_id` run 002, 003, then 005. If the installed schema already has the binding and
 receipt table (whether from 001+002 or 002+003), apply only 005 and only when no equivalent claim index
-exists. Optional `006` (also part of the candidate) indexes scoped batches; apply it after 005 only if you use them.
+exists. Optional `006` (also included in 1.3.0) indexes scoped batches; apply it after 005 only if you use them.
 
 Synthetic recording uses an optional independent table and separate crypto domains. Its retention is
 explicitly configured by the consumer; cleanup is scheduled externally. It provides no constant-time or
@@ -138,7 +138,7 @@ indefinite receipt/key retention and recovery with the same key on a fresh conne
 then decrypts/renders and calls the transport outside that transaction. Run it from your application's
 supervised process using the [worker guide](docs/how-to/setup-worker.md).
 
-New in the unpublished 1.3.0 candidate: construct the worker with a connection factory, `Closure(): PDO`, so it can
+New in 1.3.0: construct the worker with a connection factory, `Closure(): PDO`, so it can
 replace a connection the server closed while a send was running. A `processing` row whose lease
 expires (default 300 seconds, configurable) is claimed again; delivery is at-least-once. Worker connections
 need exception error mode and autocommit enabled, and the claim index `005` keeps the claim's reads from
@@ -146,7 +146,7 @@ scanning the whole table. See the
 [processing lease](docs/book/worker.md#processing-lease) and
 [ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).
 
-The unpublished 1.3.0 candidate adds `processBatchByEntityType($entityType, $limit)` for a worker dedicated to one entity type in a
+Version 1.3.0 adds `processBatchByEntityType($entityType, $limit)` for a worker dedicated to one entity type in a
 shared queue; it takes, reclaims and sends only rows of that type, and locks only candidates of that type
 (a candidate whose type changes before the lock is not taken, though it can stay locked until the claim
 ends). Optional schema `006` keeps its reads fast behind a large backlog of other types. See

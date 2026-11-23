@@ -2,25 +2,25 @@
 
 [Documentation](README.md) · [Package Reference](reference/PACKAGE_REFERENCE.md) · [Target changelog](../CHANGELOG.md#130)
 
-Version 1.3.0 is the prepared Stable 1.x target and is **not published**. Version 1.2.0 remains the latest
-published release; its immutable artifact and [publication record](releases/1.2.0-publication.md) are
+At qualification, version 1.3.0 is the Stable 1.x release target and is **not published**.
+Version 1.2.0 was the latest published release at qualification; its immutable artifact and [publication record](releases/1.2.0-publication.md) are
 historical evidence, not a qualification for 1.3.0. This guide records preparation and qualification
 requirements. It does not authorize a tag, GitHub Release, Packagist publication, or production migration.
 
 ## Candidate content
 
 `release-target.json`, VERSION, README identity/install boundary, undated 1.3.0 CHANGELOG allocation and
-SECURITY lifecycle wording must identify the same target. The observed published baseline is 1.2.0.
-The prepared candidate's main changes are worker connection recovery and processing leases, entity-type
+SECURITY lifecycle wording must identify the same target. The observed baseline at qualification is 1.2.0.
+The 1.3.0 target's main changes are worker connection recovery and processing leases, entity-type
 scoped batches, PHPMailer 7 compatibility, and the associated schema/index, test, and documentation work.
-Review the [1.3.0 semantic review](releases/1.3.0-review.md), [curated candidate notes](releases/1.3.0-notes.md),
+Review the [1.3.0 semantic review](releases/1.3.0-review.md), [curated release notes](releases/1.3.0-notes.md),
 [schema adoption](upgrade.md), real receipt/key retention, legacy/keyed clocks, synthetic isolation/retention,
 and delivery/retry limits. The 1.2.0 publication record and release notes remain unchanged. No production
 SQL or SMTP is run by preparation tooling.
 
-Candidate-only facts must not be attributed to the installed 1.2.0 package. In particular, PHPMailer 7,
+Version 1.3.0 facts must not be attributed to the installed 1.2.0 package. In particular, PHPMailer 7,
 the direct `symfony/polyfill-mbstring` dependency, worker reconnect/recovery, scoped batches, and the
-processing lease are prepared for 1.3.0 and remain unavailable from a published package until release.
+processing lease are included in the 1.3.0 release target and are absent from published 1.2.0.
 
 ## Local commands and CI parity
 
@@ -68,7 +68,7 @@ alongside it.
 1. Keep all release preparation work on a topic branch and submit it through a PR. Do not commit
    release-preparation changes directly on `main`.
 2. The owner reviews and merges the preparation PR; workflows do not create a tag or release.
-3. Record the actual approved main commit as the candidate release SHA for 1.3.0.
+3. Record the actual approved main commit as the release candidate SHA for 1.3.0.
 4. Require Full Applicable CI **and** Release Artifact Verification from the same workflow SHA. Both feed
    `CI Gate`; PR merge-ref/branch results do not qualify a later main commit.
 5. Review semantic claims, current distribution state and retained evidence. Automated string/structure
@@ -101,8 +101,8 @@ evidence.
 
 After publication, reconcile the **full live-document state** on a follow-up documentation change. Update
 the actual date, release link and Unreleased compare base in `CHANGELOG.md`; make `README.md` and
-`SECURITY.md` identify 1.3.0 as published/latest and remove pre-publication install wording. Reconcile
-candidate/unpublished wording and make the behavior available-state accurate in `SECURITY_AUDIT.md`,
+   `SECURITY.md` record the publication facts in the live source. Preserve the immutable qualification snapshot in
+   the release artifact. Reconcile current-source wording and make the behavior available-state accurate in `SECURITY_AUDIT.md`,
 `docs/README.md`, `docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md`,
 `docs/book/{architecture,introduction,queue,retry-mechanism,transport,worker}.md`,
 `docs/guides/USAGE_GUIDE.md`, `docs/how-to/{send-email,setup-worker}.md`,

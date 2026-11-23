@@ -73,6 +73,34 @@ function read(string $path): string
     return $value;
 }
 
+/** Reject live release-state claims in distributed Markdown unless their time boundary is explicit. */
+function verifyPublicationClaimsAreTemporal(string $root): void
+{
+    $qualifier = '/\b(?:at|as of) qualification\b|\bat (?:the )?(?:preparation )snapshot\b|\bat the time of this maintainer preparation review\b|\bat publication update\b/i';
+    $mutableClaim = '/\blatest\b.{0,120}\bpublished\b|\bpublished\b.{0,100}\blatest\b'
+        . '|\b(?:unpublished|not published|being prepared|not yet available|not yet published)\b'
+        . '|\bpublication state\b|\bonly after\b.{0,80}\bpublished\b|\buntil then\b'
+        . '|\bcandidate-only\b|\bprepared (?:1\.3\.0|source|candidate)\b/i';
+
+    foreach (requiredFiles($root) as $path) {
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if (!in_array($extension, ['md', 'txt'], true) && !($extension === 'php' && str_starts_with($path, 'examples/'))) {
+            continue;
+        }
+        $content = preg_replace('/\s+/u', ' ', read($root . '/' . $path));
+        ensure(is_string($content), 'Cannot normalize publication facts in ' . $path . '.');
+        $sentences = preg_split('/(?<=[.!?])\s+/', $content);
+        ensure(is_array($sentences), 'Cannot inspect publication facts in ' . $path . '.');
+        foreach ($sentences as $sentence) {
+            if (preg_match($mutableClaim, $sentence) !== 1) {
+                continue;
+            }
+            ensure(preg_match($qualifier, $sentence) === 1,
+                'Publication-state claim must be qualified as of a snapshot in ' . $path . ': ' . substr($sentence, 0, 160));
+        }
+    }
+}
+
 /** @return list<string> */
 function requiredFiles(string $root): array
 {
@@ -177,15 +205,17 @@ function verifyIdentity(string $root, string $version): void
     ensure(($manifest['name'] ?? null) === 'maatify/email-delivery' && ($manifest['type'] ?? null) === 'library', 'Wrong Composer package identity.');
     ensure(!array_key_exists('version', $manifest), 'Composer version must be derived from the tag, not hardcoded.');
     ensure(($target['package'] ?? null) === $manifest['name'] && ($target['target'] ?? null) === $version, 'Wrong release target identity.');
+    ensure(($target['publication_state_at_preparation'] ?? null) === 'unpublished', 'Preparation publication state must be an immutable snapshot.');
+    ensure(($target['publication_state_at_qualification'] ?? null) === 'unpublished', 'Qualification publication state must remain an immutable snapshot.');
     ensure(trim(read($root . '/VERSION')) === $version, 'VERSION differs from the exact target.');
     $readme = read($root . '/README.md');
     ensure(str_contains($readme, 'Release artifact target: **' . $version . '**'), 'README lacks exact artifact identity.');
     ensure(str_contains($readme, 'composer require maatify/email-delivery:' . $version), 'README lacks exact installation target.');
-    $baseline = $target['published_baseline_observed'] ?? null;
+    $baseline = $target['published_baseline_at_qualification'] ?? null;
     ensure(is_string($baseline) && preg_match('/\A\d+\.\d+\.\d+\z/', $baseline) === 1 && $baseline !== $version,
         'A distinct exact published baseline is required.');
-    $publicationState = $target['publication_state_current'] ?? 'unpublished';
-    ensure(in_array($publicationState, ['unpublished', 'published'], true), 'Unknown publication state.');
+    $publicationState = $target['publication_state_in_this_snapshot'] ?? null;
+    ensure(is_string($publicationState) && in_array($publicationState, ['unpublished', 'published'], true), 'Unknown publication state in this snapshot.');
     $published = $publicationState === 'published';
     $security = read($root . '/SECURITY.md');
     $securityFacts = preg_replace('/\s+/', ' ', $security);
@@ -200,38 +230,27 @@ function verifyIdentity(string $root, string $version): void
         ensure($date !== false && $date->format('Y-m-d\TH:i:s\Z') === $publishedAt, 'Invalid actual publication timestamp.');
         $publishedDate = $date->format('Y-m-d');
     }
-    $latestPublishedReadmeLine = $published
-        ? 'The latest published version is [' . $version . '](https://github.com/Maatify/email-delivery/releases/tag/v' . $version . '),'
-        : 'The latest published version remains [' . $baseline . '](https://github.com/Maatify/email-delivery/releases/tag/v' . $baseline . '),';
-    ensure(str_contains($readme, $latestPublishedReadmeLine), 'README latest published release link does not match publication state.');
+    $qualificationBaselineLine = 'The latest externally published version **at qualification** is [' . $baseline
+        . '](https://github.com/Maatify/email-delivery/releases/tag/v' . $baseline . '),';
+    ensure(str_contains($readme, 'Publication state **at qualification**: **unpublished**.'), 'README must preserve the qualification publication snapshot.');
+    ensure(str_contains($readme, $qualificationBaselineLine), 'README qualification published baseline differs from the observed baseline.');
     if (!$published) {
-        ensure(str_contains($readme, 'unpublished') && str_contains($readme, 'only after'), 'Missing pre-publication installation boundary.');
-        ensure(str_contains($securityFacts, 'Version **' . $baseline . '** is the latest **published** version within the supported 1.x line.'),
+        ensure(str_contains($readme, 'At qualification, install') && str_contains($readme, 'when 1.3.0 is available from Packagist'), 'Missing qualification installation boundary.');
+        ensure(str_contains($securityFacts, 'At qualification, version **' . $baseline . '** was the latest **published** version within the supported 1.x line.'),
             'Security policy latest published version differs from the observed baseline.');
-        ensure(str_contains($securityFacts, 'Version **' . $version . '** is being prepared and is **unpublished**'),
+        ensure(str_contains($securityFacts, 'At qualification, version **' . $version . '** was the release target and **unpublished**'),
             'Security policy must identify the target as unpublished.');
     } else {
-        ensure(str_contains($readme, 'Publication state: **published**'), 'Live README must report publication explicitly.');
-        ensure(!str_contains($readme, 'The latest published version remains [' . $baseline . ']'),
-            'README still identifies the previous baseline as latest after publication.');
-        ensure(!str_contains($readme, 'only after ' . $version . ' is published')
-            && !str_contains($readme, 'Until then, install the latest published'),
-            'README retains pre-publication installation guidance.');
-        $publishedIntro = 'The latest published version is [' . $version . '](https://github.com/Maatify/email-delivery/releases/tag/v'
-            . $version . '), published on ' . $publishedDate . ' UTC and verified as an exact Composer dist installation.';
-        ensure(str_contains($readmeFacts, $publishedIntro), 'README publication date/availability paragraph is stale or inconsistent.');
-        ensure(!str_contains($readmeFacts, 'unpublished') && !str_contains($readmeFacts, $version . ' candidate')
-            && !str_contains($readmeFacts, 'does not make that version available from Packagist'),
-            'README still describes the published target as an unpublished candidate.');
-        ensure(str_contains($securityFacts, 'Version **' . $version . '** is the latest **published** version within the supported 1.x line.'),
-            'Security policy must identify the target as the latest published version.');
-        ensure(!str_contains($securityFacts, 'Version **' . $baseline . '** is the latest **published** version')
-            && !str_contains($securityFacts, 'Version **' . $version . '** is being prepared and is **unpublished**'),
-            'Security policy retains stale publication state.');
+        $publishedIntro = 'At publication update on ' . $publishedDate . ', ' . $version
+            . ' became the latest published release (published ' . $publishedDate . ' UTC).';
+        ensure(str_contains($readmeFacts, $publishedIntro), 'Live README publication date/availability paragraph is stale or inconsistent.');
+        ensure(str_contains($securityFacts, 'At publication update on ' . $publishedDate . ', the latest published version within the supported 1.x line is **'
+            . $version . '**.'),
+            'Live security policy must identify the latest published version.');
     }
     ensure(str_contains($readme, '## Public Runtime API'), 'Missing README API overview.');
     $changelog = read($root . '/CHANGELOG.md');
-    $compareBase = $published ? $version : ($target['published_baseline_observed'] ?? null);
+    $compareBase = $published ? $version : ($target['published_baseline_at_qualification'] ?? null);
     ensure(is_string($compareBase) && str_contains($changelog,
         '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v' . $compareBase . '...HEAD'),
         'Unreleased comparison must use the target tag after publication, or the latest published baseline before it.');
@@ -248,7 +267,8 @@ function verifyIdentity(string $root, string $version): void
         ensure(($target['publication_evidence_url'] ?? null) === 'https://github.com/Maatify/email-delivery/releases/download/v' . $version . '/publication-verification.json', 'Exact external publication evidence is required.');
     }
     ensure(str_contains($security, '**' . $version . '**') && str_contains($security, '| 1.x'), 'Security identity/support is inconsistent.');
-    ensure(str_contains($security, $published ? '**published**' : 'unpublished') && str_contains($security, 'security@maatify.dev'), 'Security lifecycle/reporting mismatch.');
+    verifyPublicationClaimsAreTemporal($root);
+    ensure(str_contains($security, 'security@maatify.dev'), 'Security lifecycle/reporting mismatch.');
     foreach (['docs/guides/USAGE_GUIDE.md', 'docs/reference/PACKAGE_REFERENCE.md', 'examples/README.md', 'llms.txt', 'CONTRIBUTING.md', 'CODE_OF_CONDUCT.md', 'LICENSE'] as $file) {
         ensure(is_file($root . '/' . $file), 'Required consumer file missing: ' . $file);
     }

@@ -14,14 +14,14 @@ authorization, connection/key configuration, process supervision and any HTTP in
 | `PdoSyntheticEmailStore` | Independent encrypted inert recording and bounded expiry cleanup; no worker handoff |
 | `cd_email_queue` | Encrypted recipient/context plus scheduling and processing metadata |
 | `cd_email_enqueue_receipts` | Durable identity, encrypted digest and original job/receipt link |
-| `EmailQueueWorker` | Claim due pending rows; the 1.3.0 candidate also claims expired processing leases; commit, decrypt/render, invoke transport, record outcome/retry |
+| `EmailQueueWorker` | Claim due pending rows and the expired processing leases introduced in 1.3.0; commit, decrypt/render, invoke transport, record outcome/retry |
 | `TwigEmailRenderer` | Nonempty subject block and HTML body; no plain-text body generation |
 | `SmtpEmailTransport` | PHPMailer SMTP call with configured TLS/SSL behavior and optional Reply-To |
 
 ![Acceptance versus processing flow](../assets/email-flow-diagram.svg)
 
-The worker lease/recovery behavior in this chapter describes the prepared, unpublished 1.3.0 candidate;
-published 1.2.0 does not reclaim interrupted `processing` rows automatically. The keyed acceptance
+The worker lease/recovery behavior in this chapter was introduced in 1.3.0;
+1.2.0 does not reclaim interrupted `processing` rows automatically. The keyed acceptance
 transaction contains no SMTP call. Worker row locks protect batch claiming, not
 the external side effect. A crash after claim leaves `processing` until the row's lease expires and a
 later batch claims it again; a transport acceptance followed by lost acknowledgement can be ambiguous.

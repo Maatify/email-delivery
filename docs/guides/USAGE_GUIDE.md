@@ -2,7 +2,7 @@
 
 [Package Reference](../reference/PACKAGE_REFERENCE.md) · [Examples](../../examples/README.md) · [Schema adoption](../upgrade.md)
 
-This guide follows the prepared 1.3.0 source. Candidate-only additions are labeled; published 1.2.0
+This guide describes the 1.3.0 source and labels version-specific additions; 1.2.0
 consumers should use the tagged dependency contract and upgrade guidance.
 
 ## Fit, requirements and non-goals
@@ -59,7 +59,7 @@ and recover with the same key on a fresh connection. See [the detailed contract]
 
 ## Worker
 
-The lease and connection-recovery behavior in this section is prepared for 1.3.0 and is not in published
+The lease and connection-recovery behavior in this section is included in 1.3.0 and is not in published
 1.2.0.
 
 Input: a connection factory (`workerConnectionFactory()`), crypto/context provider, renderer, transport,

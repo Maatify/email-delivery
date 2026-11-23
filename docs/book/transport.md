@@ -6,8 +6,8 @@
 `send(string $recipientEmail, RenderedEmailDTO $email, ?string $replyToEmail=null): void` is the
 network boundary. It creates PHPMailer in exception mode, configures SMTP authentication, sets
 From/recipient, optional Reply-To, literal subject and HTML body, then calls `send()`. The published
-1.2.0 dependency accepts PHPMailer 6.9; PHPMailer 7 support is prepared for the unpublished 1.3.0
-candidate. See [PHPMailer 6.9 and 7](#phpmailer-69-and-7).
+1.2.0 dependency accepts PHPMailer 6.9; PHPMailer 7 support was added in 1.3.0.
+See [PHPMailer 6.9 and 7](#phpmailer-69-and-7).
 
 | Configuration | Actual behavior |
 | --- | --- |
@@ -28,9 +28,9 @@ sets no plain-text alternative and does not itself escape arbitrary HTML supplie
 
 <a id="phpmailer-69-and-7"></a>
 
-## PHPMailer 6.9 and 7 — 1.3.0 candidate
+## PHPMailer 6.9 and 7 — 1.3.0
 
-Published 1.2.0 accepts `phpmailer/phpmailer` `^6.9`. The prepared, unpublished 1.3.0 candidate accepts
+Version 1.2.0 accepts `phpmailer/phpmailer` `^6.9`. Version 1.3.0 accepts
 `^6.9 || ^7.0`. The transport creates its own `PHPMailer` (it does
 not subclass it) and uses only `isSMTP()`, `SMTPDebug`, `Host`, `SMTPAuth`, `Username`, `Password`,
 `SMTPSecure` with `ENCRYPTION_STARTTLS`/`ENCRYPTION_SMTPS`, `SMTPAutoTLS`, `Port`, `Timeout`, `CharSet`,
@@ -49,5 +49,5 @@ changes too. What 7.x changes on the sending path, and why the transport is unaf
 | 7.2.0: long address headers folded; no `QUIT` after a connection lost during `DATA` | headers stay valid; a failed send still throws, wrapped as `EmailTransportException` |
 | 7.0.1, 7.2.0, 6.11.0: XOAUTH2 handling, S/MIME line endings, CIDs in `msgHTML()`, qmail, `parseAddresses()` and `pcre8` deprecations | none: not used |
 
-The 1.3.0 candidate's CI sends through the transport to an isolated test SMTP server on PHPMailer 6.9.0
+The 1.3.0 CI sends through the transport to an isolated test SMTP server on PHPMailer 6.9.0
 and on the latest 7.x, and checks the delivered sender, recipient, Reply-To, UTF-8 subject, HTML body and `X-Mailer`.
