@@ -34,7 +34,7 @@ final class MarkdownFenceVerificationTest extends TestCase
     public function testUnclosedFenceIsRejected(): void
     {
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Unclosed Markdown fenced code block in dangling.md.');
+        $this->expectExceptionMessage('Unclosed Markdown fenced code block in dangling.md starting at line');
 
         verifyMarkdownFences("Text\n```php\ncode\n", 'dangling.md');
     }
@@ -42,7 +42,7 @@ final class MarkdownFenceVerificationTest extends TestCase
     public function testMismatchedFenceMarkerDoesNotCloseBlock(): void
     {
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Unclosed Markdown fenced code block in mismatched.md.');
+        $this->expectExceptionMessage('Unclosed Markdown fenced code block in mismatched.md starting at line');
 
         verifyMarkdownFences("~~~\n```\n", 'mismatched.md');
     }
@@ -50,7 +50,7 @@ final class MarkdownFenceVerificationTest extends TestCase
     public function testUnclosedFenceInsideBlockquoteIsRejected(): void
     {
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Unclosed Markdown fenced code block in blockquote.md.');
+        $this->expectExceptionMessage('Unclosed Markdown fenced code block in blockquote.md starting at line');
 
         verifyMarkdownFences("> ```php\n> code\n", 'blockquote.md');
     }
@@ -58,7 +58,7 @@ final class MarkdownFenceVerificationTest extends TestCase
     public function testUnclosedFenceInsideOrderedListIsRejected(): void
     {
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Unclosed Markdown fenced code block in list.md.');
+        $this->expectExceptionMessage('Unclosed Markdown fenced code block in list.md starting at line');
 
         verifyMarkdownFences("1. ```php\n   code\n", 'list.md');
     }
@@ -66,7 +66,7 @@ final class MarkdownFenceVerificationTest extends TestCase
     public function testUnclosedFenceAfterBlankLineInListItemIsRejected(): void
     {
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Unclosed Markdown fenced code block in nested-list.md.');
+        $this->expectExceptionMessage('Unclosed Markdown fenced code block in nested-list.md starting at line');
 
         verifyMarkdownFences("1. Example\n\n    ```php\n    echo 'hello';\n", 'nested-list.md');
     }
@@ -85,6 +85,28 @@ final class MarkdownFenceVerificationTest extends TestCase
         verifyMarkdownFences("    ```php\n    echo 'hello';\n", 'indented-code.md');
     }
 
+    public function testUnclosedFenceInNestedListAfterBlankLineIsRejected(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Unclosed Markdown fenced code block in nested-list.md starting at line');
+
+        verifyMarkdownFences("1. Outer\n\n    1. Inner\n\n       ```php\n       echo 'hello';\n", 'nested-list.md');
+    }
+
+    public function testClosedFenceInNestedListAfterBlankLineIsAccepted(): void
+    {
+        $this->expectNotToPerformAssertions();
+
+        verifyMarkdownFences("1. Outer\n\n    1. Inner\n\n       ```php\n       echo 'hello';\n       ```\n", 'closed-nested-list.md');
+    }
+
+    public function testIndentedCodeAfterListMarkerIsNotTreatedAsFence(): void
+    {
+        $this->expectNotToPerformAssertions();
+
+        verifyMarkdownFences("1.     ```php\n       echo 'hello';\n", 'list-indented-code.md');
+    }
+
     public function testFenceMarkersInsideHtmlCommentsAreIgnored(): void
     {
         $this->expectNotToPerformAssertions();
@@ -95,7 +117,7 @@ final class MarkdownFenceVerificationTest extends TestCase
     public function testListMarkerInsideFenceContentDoesNotCloseTheFence(): void
     {
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Unclosed Markdown fenced code block in code-content.md.');
+        $this->expectExceptionMessage('Unclosed Markdown fenced code block in code-content.md starting at line');
 
         verifyMarkdownFences("```text\n- ```\n", 'code-content.md');
     }

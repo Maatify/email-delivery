@@ -76,111 +76,22 @@ function read(string $path): string
 /** Reject Markdown documents that end inside an unclosed fenced code block. */
 function verifyMarkdownFences(string $markdown, string $path = 'Markdown'): void
 {
-    $openMarker = null;
-    $openLength = 0;
-    $openQuoteDepth = 0;
-    $openListIndent = 0;
-    $insideHtmlComment = false;
-    $listContexts = [];
-    foreach (explode("\n", $markdown) as $line) {
-        $line = rtrim($line, "\r");
-        if ($openMarker === null) {
-            $line = stripMarkdownHtmlComments($line, $insideHtmlComment);
-            [$line, $quoteDepth] = stripMarkdownQuotePrefixes($line);
-            $listIndent = 0;
-            if (preg_match('/^( {0,3})((?:[*+-]|\d{1,9}[.)]))([ \t]+)(.*)$/D', $line, $match) === 1) {
-                $markerIndent = strlen($match[1]);
-                while ($listContexts !== [] && end($listContexts)['marker_indent'] >= $markerIndent) {
-                    array_pop($listContexts);
-                }
-                while ($listContexts !== [] && $markerIndent < end($listContexts)['content_indent']) {
-                    array_pop($listContexts);
-                }
-                $listIndent = $markerIndent + strlen($match[2]) + strlen($match[3]);
-                $listContexts[] = [
-                    'marker_indent' => $markerIndent,
-                    'content_indent' => $listIndent,
-                    'quote_depth' => $quoteDepth,
-                ];
-                $line = $match[4];
-            } elseif ($listContexts !== []) {
-                $listContext = end($listContexts);
-                if (trim($line) !== '' && ($quoteDepth !== $listContext['quote_depth']
-                    || strspn($line, ' ') < $listContext['content_indent'])) {
-                    $listContexts = [];
-                } elseif (trim($line) !== '') {
-                    $listIndent = $listContext['content_indent'];
-                    $line = substr($line, $listIndent);
-                }
-            }
-            if (preg_match('/^ {0,3}(`{3,}|~{3,})(.*)$/D', $line, $match) !== 1) {
-                continue;
-            }
-            $marker = $match[1][0];
-            if ($marker === '`' && str_contains($match[2], '`')) {
-                continue;
-            }
-            $openMarker = $marker;
-            $openLength = strlen($match[1]);
-            $openQuoteDepth = $quoteDepth;
-            $openListIndent = $listIndent;
+    $environment = new \League\CommonMark\Environment\Environment();
+    $environment->addExtension(new \League\CommonMark\Extension\CommonMark\CommonMarkCoreExtension());
+    $document = (new \League\CommonMark\Parser\MarkdownParser($environment))->parse($markdown);
+    foreach ($document->iterator(\League\CommonMark\Node\NodeIterator::FLAG_BLOCKS_ONLY) as $node) {
+        if (!$node instanceof \League\CommonMark\Extension\CommonMark\Node\Block\FencedCode) {
             continue;
         }
-        $quoteDepth = 0;
-        if ($openQuoteDepth > 0) {
-            [$line, $quoteDepth] = stripMarkdownQuotePrefixes($line);
-            if ($quoteDepth !== $openQuoteDepth) {
-                continue;
-            }
-        }
-        if ($openListIndent > 0 && preg_match('/^ {' . $openListIndent . '}/', $line) === 1) {
-            $line = substr($line, $openListIndent);
-        }
-        $pattern = '/^ {0,3}' . preg_quote($openMarker, '/') . '{' . $openLength . ',}[ \t]*$/D';
-        if (preg_match($pattern, $line) === 1) {
-            $openMarker = null;
-            $openLength = 0;
-            $openQuoteDepth = 0;
-            $openListIndent = 0;
-        }
+        $startLine = $node->getStartLine();
+        $endLine = $node->getEndLine();
+        ensure(is_int($startLine) && is_int($endLine), 'Cannot locate fenced code block in ' . $path . '.');
+        // CommonMark's source span includes both delimiters when closed; the literal has one newline per body line.
+        $sourceLineCount = $endLine - $startLine + 1;
+        $contentLineCount = substr_count($node->getLiteral(), "\n");
+        ensure($sourceLineCount >= $contentLineCount + 2,
+            'Unclosed Markdown fenced code block in ' . $path . ' starting at line ' . $startLine . '.');
     }
-    ensure($openMarker === null, 'Unclosed Markdown fenced code block in ' . $path . '.');
-}
-
-/** @return array{string, int} */
-function stripMarkdownQuotePrefixes(string $line): array
-{
-    $quoteDepth = 0;
-    while (preg_match('/^ {0,3}>[ \t]?/', $line, $match) === 1) {
-        $line = substr($line, strlen($match[0]));
-        ++$quoteDepth;
-    }
-    return [$line, $quoteDepth];
-}
-
-function stripMarkdownHtmlComments(string $line, bool &$insideComment): string
-{
-    $visible = '';
-    $offset = 0;
-    while ($offset < strlen($line)) {
-        if ($insideComment) {
-            $end = strpos($line, '-->', $offset);
-            if ($end === false) {
-                return $visible;
-            }
-            $offset = $end + 3;
-            $insideComment = false;
-            continue;
-        }
-        $start = strpos($line, '<!--', $offset);
-        if ($start === false) {
-            return $visible . substr($line, $offset);
-        }
-        $visible .= substr($line, $offset, $start - $offset);
-        $offset = $start + 4;
-        $insideComment = true;
-    }
-    return $visible;
 }
 
 /** Reject live release-state claims in distributed consumer text unless their time boundary is explicit. */
