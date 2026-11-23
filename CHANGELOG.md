@@ -166,7 +166,7 @@ Published dates below use the corresponding GitHub Release publication date in U
 - Encryption support for queue payloads via `maatify/crypto`.
 - Worker retry mechanism with exponential backoff for transient and permanent failures.
 
-[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.2.0...HEAD
 [1.2.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.2.0
 [1.1.1]: https://github.com/Maatify/email-delivery/releases/tag/v1.1.1
 [1.1.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.1.0

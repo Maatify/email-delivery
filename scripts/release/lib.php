@@ -191,6 +191,10 @@ function verifyIdentity(string $root, string $version): void
     }
     ensure(str_contains($readme, '## Public Runtime API'), 'Missing README API overview.');
     $changelog = read($root . '/CHANGELOG.md');
+    $compareBase = $published ? $version : ($target['published_baseline_observed'] ?? null);
+    ensure(is_string($compareBase) && str_contains($changelog,
+        '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v' . $compareBase . '...HEAD'),
+        'Unreleased comparison must use the target tag after publication, or the latest published baseline before it.');
     if (!$published) {
         ensure(str_contains($changelog, '## [' . $version . "]\n"), 'Missing undated exact-target changelog section.');
         ensure(!str_contains($changelog, 'releases/tag/v' . $version), 'Unpublished target must not link to a nonexistent release.');

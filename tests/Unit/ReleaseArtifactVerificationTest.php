@@ -67,6 +67,7 @@ final class ReleaseArtifactVerificationTest extends TestCase
         yield 'install target' => ['README.md', 'composer require maatify/email-delivery:1.3.0', 'composer require maatify/email-delivery:1.2.0'];
         yield 'changelog allocation' => ['CHANGELOG.md', '## [1.3.0]', '## [Unreleased legacy allocation]'];
         yield 'unallocated changes' => ['CHANGELOG.md', '## [Unreleased]', "## [Unreleased]\n\n### Added\nAllocated change left behind."];
+        yield 'unpublished compare base' => ['CHANGELOG.md', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.2.0...HEAD', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.3.0...HEAD'];
         yield 'false release link' => ['CHANGELOG.md', '## [1.3.0]', "## [1.3.0]\n\nhttps://github.com/Maatify/email-delivery/releases/tag/v1.3.0"];
         yield 'security identity' => ['SECURITY.md', '**1.3.0**', '**1.2.0**'];
         yield 'target metadata' => ['release-target.json', '"target": "1.3.0"', '"target": "1.2.0"'];
@@ -192,6 +193,7 @@ final class ReleaseArtifactVerificationTest extends TestCase
         yield 'invalid actual date' => ['release-target.json', '2026-11-23T20:09:38Z', '2026-02-31T20:09:38Z'];
         yield 'stale live date' => ['CHANGELOG.md', '## [1.3.0] - 2026-11-23', '## [1.3.0] - 2026-11-22'];
         yield 'missing release link' => ['CHANGELOG.md', '[1.3.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.3.0', '[1.3.0]: https://example.invalid'];
+        yield 'stale published compare base' => ['CHANGELOG.md', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.3.0...HEAD', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.2.0...HEAD'];
         yield 'missing publication evidence' => ['release-target.json', 'publication-verification.json', 'missing-evidence.json'];
         yield 'stale live README' => ['README.md', 'Publication state: **published**', 'Publication state: pending'];
     }
@@ -231,6 +233,7 @@ final class ReleaseArtifactVerificationTest extends TestCase
         $changelogPath = $this->directory . '/CHANGELOG.md';
         $changelog = (string) file_get_contents($changelogPath);
         $changelog = str_replace('## [1.3.0]', '## [1.3.0] - 2026-11-23', $changelog);
+        $changelog = str_replace('[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.2.0...HEAD', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.3.0...HEAD', $changelog);
         $changelog .= "\n[1.3.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.3.0\n";
         file_put_contents($changelogPath, $changelog);
 
