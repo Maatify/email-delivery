@@ -190,6 +190,16 @@ function verifyIdentity(string $root, string $version): void
     $security = read($root . '/SECURITY.md');
     $securityFacts = preg_replace('/\s+/', ' ', $security);
     ensure(is_string($securityFacts), 'Cannot normalize security publication facts.');
+    $readmeFacts = preg_replace('/\s+/', ' ', $readme);
+    ensure(is_string($readmeFacts), 'Cannot normalize README publication facts.');
+    $publishedAt = $published ? ($target['published_at'] ?? null) : null;
+    $publishedDate = null;
+    if ($published) {
+        ensure(is_string($publishedAt), 'Published timestamp is required.');
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s\Z', $publishedAt, new \DateTimeZone('UTC'));
+        ensure($date !== false && $date->format('Y-m-d\TH:i:s\Z') === $publishedAt, 'Invalid actual publication timestamp.');
+        $publishedDate = $date->format('Y-m-d');
+    }
     $latestPublishedReadmeLine = $published
         ? 'The latest published version is [' . $version . '](https://github.com/Maatify/email-delivery/releases/tag/v' . $version . '),'
         : 'The latest published version remains [' . $baseline . '](https://github.com/Maatify/email-delivery/releases/tag/v' . $baseline . '),';
@@ -207,6 +217,12 @@ function verifyIdentity(string $root, string $version): void
         ensure(!str_contains($readme, 'only after ' . $version . ' is published')
             && !str_contains($readme, 'Until then, install the latest published'),
             'README retains pre-publication installation guidance.');
+        $publishedIntro = 'The latest published version is [' . $version . '](https://github.com/Maatify/email-delivery/releases/tag/v'
+            . $version . '), published on ' . $publishedDate . ' UTC and verified as an exact Composer dist installation.';
+        ensure(str_contains($readmeFacts, $publishedIntro), 'README publication date/availability paragraph is stale or inconsistent.');
+        ensure(!str_contains($readmeFacts, 'unpublished') && !str_contains($readmeFacts, $version . ' candidate')
+            && !str_contains($readmeFacts, 'does not make that version available from Packagist'),
+            'README still describes the published target as an unpublished candidate.');
         ensure(str_contains($securityFacts, 'Version **' . $version . '** is the latest **published** version within the supported 1.x line.'),
             'Security policy must identify the target as the latest published version.');
         ensure(!str_contains($securityFacts, 'Version **' . $baseline . '** is the latest **published** version')
@@ -225,11 +241,7 @@ function verifyIdentity(string $root, string $version): void
         $parts = explode('## [' . $version . ']', $changelog, 2);
         ensure(preg_match('/^### /m', $parts[0]) !== 1, 'Allocated changes remain under Unreleased.');
     } else {
-        $publishedAt = $target['published_at'] ?? null;
-        ensure(is_string($publishedAt), 'Published timestamp is required.');
-        $date = \DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s\Z', $publishedAt, new \DateTimeZone('UTC'));
-        ensure($date !== false && $date->format('Y-m-d\TH:i:s\Z') === $publishedAt, 'Invalid actual publication timestamp.');
-        ensure(str_contains($changelog, '## [' . $version . '] - ' . $date->format('Y-m-d')), 'Live changelog needs the actual publication date.');
+        ensure(str_contains($changelog, '## [' . $version . '] - ' . $publishedDate), 'Live changelog needs the actual publication date.');
         ensure(str_contains($changelog, '[' . $version . ']: https://github.com/Maatify/email-delivery/releases/tag/v' . $version), 'Live release link is missing.');
         $qualified = $target['qualified_sha'] ?? null;
         ensure(is_string($qualified) && preg_match('/\A[a-f0-9]{40}\z/', $qualified) === 1, 'Qualified immutable SHA required.');

@@ -195,6 +195,9 @@ final class ReleaseArtifactVerificationTest extends TestCase
         yield 'missing release link' => ['CHANGELOG.md', '[1.3.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.3.0', '[1.3.0]: https://example.invalid'];
         yield 'stale published compare base' => ['CHANGELOG.md', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.3.0...HEAD', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.2.0...HEAD'];
         yield 'stale latest published README baseline' => ['README.md', 'The latest published version is [1.3.0]', 'The latest published version remains [1.2.0]'];
+        yield 'stale README publication date' => ['README.md', 'published on 2026-11-23 UTC', 'published on 2026-11-06 UTC'];
+        yield 'stale Packagist installation boundary' => ['README.md', 'Run that exact command to install 1.3.0 from Packagist.', 'Run that exact install command only after 1.3.0 is published. Until then, install 1.2.0.'];
+        yield 'stale candidate label' => ['README.md', 'New in 1.3.0:', 'New in the unpublished 1.3.0 candidate:'];
         yield 'stale latest published security baseline' => ['SECURITY.md', 'Version **1.3.0** is the latest **published** version within the supported 1.x line.', 'Version **1.2.0** is the latest **published** version within the supported 1.x line.'];
         yield 'missing publication evidence' => ['release-target.json', 'publication-verification.json', 'missing-evidence.json'];
         yield 'stale live README' => ['README.md', 'Publication state: **published**', 'Publication state: pending'];
@@ -230,9 +233,26 @@ final class ReleaseArtifactVerificationTest extends TestCase
 
         $readmePath = $this->directory . '/README.md';
         $readme = (string) file_get_contents($readmePath);
-        $readme = str_replace('Publication state: **unpublished**', 'Publication state: **published**', $readme);
-        $readme = str_replace('The latest published version remains [1.2.0](https://github.com/Maatify/email-delivery/releases/tag/v1.2.0),', 'The latest published version is [1.3.0](https://github.com/Maatify/email-delivery/releases/tag/v1.3.0),', $readme);
-        $readme = str_replace("Run that exact install command **only after 1.3.0 is published**. Until then, install the latest published\nversion with `composer require maatify/email-delivery:1.2.0`.", 'The exact 1.3.0 install command is available from Packagist.', $readme);
+        $readme = $this->replaceFixtureText($readme, 'Publication state: **unpublished**', 'Publication state: **published**');
+        $readme = $this->replaceFixtureText($readme,
+            'The latest published version remains [1.2.0](https://github.com/Maatify/email-delivery/releases/tag/v1.2.0),',
+            'The latest published version is [1.3.0](https://github.com/Maatify/email-delivery/releases/tag/v1.3.0),');
+        $readme = $this->replaceFixtureText($readme, 'published on 2026-11-06 UTC', 'published on 2026-11-23 UTC');
+        $readme = $this->replaceFixtureText($readme,
+            "This branch prepares\n1.3.0; it does not make that version available from Packagist or change the immutable 1.2.0 artifact.",
+            'This repository records the 1.3.0 publication; it does not change the immutable 1.3.0 artifact.');
+        $readme = $this->replaceFixtureText($readme,
+            'In the prepared, unpublished 1.3.0 candidate, a job', 'In 1.3.0, a job');
+        $readme = $this->replaceFixtureText($readme,
+            "Run that exact install command **only after 1.3.0 is published**. Until then, install the latest published\nversion with `composer require maatify/email-delivery:1.2.0`.",
+            'Run that exact command to install 1.3.0 from Packagist.');
+        $readme = $this->replaceFixtureText($readme, 'The 1.3.0 candidate requires', 'The 1.3.0 release requires');
+        $readme = $this->replaceFixtureText($readme,
+            'these candidate dependency changes are not part of 1.2.0.', 'these dependency differences are not part of 1.2.0.');
+        $readme = $this->replaceFixtureText($readme, "The 1.3.0 candidate's worker claim index", "The 1.3.0 release's worker claim index");
+        $readme = $this->replaceFixtureText($readme, '(also part of the candidate)', '(also part of 1.3.0)');
+        $readme = $this->replaceFixtureText($readme, 'New in the unpublished 1.3.0 candidate:', 'New in 1.3.0:');
+        $readme = $this->replaceFixtureText($readme, 'The unpublished 1.3.0 candidate adds', '1.3.0 adds');
         file_put_contents($readmePath, $readme);
 
         $changelogPath = $this->directory . '/CHANGELOG.md';
@@ -244,7 +264,15 @@ final class ReleaseArtifactVerificationTest extends TestCase
 
         $securityPath = $this->directory . '/SECURITY.md';
         $security = (string) file_get_contents($securityPath);
-        $security = str_replace("Version **1.2.0** is the latest **published** version within the supported 1.x line. Version **1.3.0**\nis being prepared and is **unpublished**; do not treat this branch as an available release. The 1.2.0\ntagged artifact and its publication evidence remain immutable.", 'Version **1.3.0** is the latest **published** version within the supported 1.x line. Its tagged artifact and publication evidence remain immutable.', $security);
+        $security = $this->replaceFixtureText($security,
+            "Version **1.2.0** is the latest **published** version within the supported 1.x line. Version **1.3.0**\nis being prepared and is **unpublished**; do not treat this branch as an available release. The 1.2.0\ntagged artifact and its publication evidence remain immutable.",
+            'Version **1.3.0** is the latest **published** version within the supported 1.x line. Its tagged artifact and publication evidence remain immutable.');
         file_put_contents($securityPath, $security);
+    }
+
+    private function replaceFixtureText(string $content, string $before, string $after): string
+    {
+        self::assertStringContainsString($before, $content, 'Published fixture transition must hit the current live wording.');
+        return str_replace($before, $after, $content);
     }
 }
