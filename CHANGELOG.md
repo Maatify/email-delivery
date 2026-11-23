@@ -7,6 +7,10 @@ Published dates below use the corresponding GitHub Release publication date in U
 
 ## [Unreleased]
 
+<a id="130"></a>
+
+## [1.3.0]
+
 ### Added
 - `EmailQueueWorker::processBatchByEntityType(string $entityType, int $limit = 50)` (#12): one batch of the
   rows whose `entity_type` equals the given type byte for byte (case, accents and trailing spaces count,
@@ -25,7 +29,7 @@ Published dates below use the corresponding GitHub Release publication date in U
   opens its connection on first use and replaces one the server closed: before the claim transaction,
   and once around each single status statement after driver error 2006, 2013 or 4031. A `PDO` instance
   is still accepted and cannot reconnect. See [ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md),
-  [accepted by the owner](https://github.com/Maatify/email-delivery/pull/14#issuecomment-7079019339) on 2026-11-22; the change remains Unreleased.
+  [accepted by the owner](https://github.com/Maatify/email-delivery/pull/14#issuecomment-7079019339) on 2026-11-22; the change is allocated to the unpublished 1.3.0 candidate.
 - Processing lease (#13): a `processing` row whose `updated_at` is older than the lease is claimed
   again by a later batch, under the attempt cap as a new attempt that is sent again. At the cap it is
   settled `failed` with `processing_lease_expired`, without a send. The claim stamps the lease and
@@ -89,8 +93,10 @@ Published dates below use the corresponding GitHub Release publication date in U
   requirements do not change.
 - Delivery is at-least-once: a message may be sent twice when its `sent` status cannot be recorded
   even after one reconnect, or when one render and send outlasts the lease.
-- One additive index (`005`). Fresh installs run 001, 002, then 005; legacy tables run 002, 003, then 005;
-  1.2.0 installs that already applied 002 and 003 run only 005. It is built with `ALGORITHM=INPLACE,
+- One additive index (`005`). Fresh installs run 001, 002, then 005; legacy tables without the binding run
+  002, 003, then 005. Existing keyed schemas (001+002 or 002+003), including 1.2.0, need only 005 when
+  no equivalent index exists. Choose by inspecting the installed schema, not assumed migration history.
+  It is built with `ALGORITHM=INPLACE,
   LOCK=NONE`: reads and writes continue, but it still takes brief metadata locks and waits for open
   transactions, so run it off-peak. The worker works without it, but its candidate reads then scan the
   table (without locks). Rows left `processing` by an earlier version become claimable on the first

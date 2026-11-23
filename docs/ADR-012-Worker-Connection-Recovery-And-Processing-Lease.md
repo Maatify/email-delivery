@@ -1,6 +1,6 @@
 # ADR-012: Worker connection recovery and processing lease
 
-**Status:** ACCEPTED / UNRELEASED. The owner accepted this entire ADR on 2026-11-22;
+**Status:** ACCEPTED / PREPARED FOR 1.3.0 (UNPUBLISHED). The owner accepted this entire ADR on 2026-11-22;
 see the [formal owner-acceptance record on PR #14](https://github.com/Maatify/email-delivery/pull/14#issuecomment-7079019339).
 Items 5 and 7 were separately decided earlier on [issue #13](https://github.com/Maatify/email-delivery/issues/13#issuecomment-7072371032):
 at-least-once delivery, and a default lease of 300 seconds. Approval of this architecture does not
@@ -172,7 +172,9 @@ which scheduled a second send of a message that had already been sent.
   now requires directly (`^1.3`, the constraint Twig already requires, so no new platform requirement).
 - One additive schema file, `005_email_queue_claim_index.sql`, for every installation that has no index
   led by `(status, priority, id)`. Fresh installs run 001, 002, then 005; legacy tables run 002, 003, then
-  005; 1.2.0 installs that already applied 002 and 003 run only 005.
+  005. Existing keyed schemas with `enqueue_receipt_id` and a compatible receipt table (whether built
+  from 001+002 or 002+003), including 1.2.0 installs, need only 005 when no equivalent index exists.
+  Choose by inspecting the installed schema, not assumed migration history.
   - **Online, with limits:** it uses `ALGORITHM=INPLACE, LOCK=NONE`, so reads and writes continue while
     the index builds. It still takes a brief exclusive metadata lock at the start and end, waits for open
     transactions on the table, and briefly blocks sessions queued behind it. Run it off-peak; see the

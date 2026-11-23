@@ -2,6 +2,9 @@
 
 [Book](README.md) · [Worker clocks](worker.md#clock-domains)
 
+The processing-lease recovery described below is prepared for 1.3.0; published 1.2.0 does not reclaim
+interrupted `processing` jobs automatically.
+
 The worker increments `attempts` while claiming a pending batch. After a handled row failure it records
 a length-limited error code/reason and either schedules another pending attempt or marks it failed.
 These are fixed increasing delay tables, not a configurable exponential formula:

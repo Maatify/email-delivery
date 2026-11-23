@@ -1,7 +1,7 @@
 -- Claim index for the worker. Apply once, after the earlier files of your path:
 --   fresh install: 001, 002, then 005;
 --   legacy table from before the keyed API: 002, 003 (once), then 005;
---   1.2.0 install that already applied 002 and 003: only 005.
+--   existing keyed schema (001+002 or 002+003), including 1.2.0: only 005 if no equivalent index exists.
 -- Not needed when the table already has an index led by (status, priority, id). Not idempotent.
 -- Without such an index the claim's candidate reads scan the table (without locks); with it each
 -- walks its status in (priority, id) order and stops at the batch limit.

@@ -33,8 +33,9 @@ identities or make another job with a reused ID appear sent. See the [API refere
 ## Delivery and transport limits
 
 Row locks serialize claiming pending jobs; the worker commits `processing` before SMTP. Locks do not
-provide exactly-once external delivery. A `processing` row whose lease expires is claimed again and
-may be sent twice (at-least-once); see [ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).
+provide exactly-once external delivery. In the prepared, unpublished 1.3.0 candidate, a `processing`
+row whose lease expires is claimed again and may be sent twice (at-least-once); published 1.2.0 does
+not include this recovery behavior. See [ADR-012](docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md).
 SMTP timeout can be ambiguous, and retrying a transport may send again.
 
 `SmtpEmailTransport` configures PHPMailer with HTML content and optional Reply-To. It does not escape

@@ -2,6 +2,9 @@
 
 [Package Reference](../reference/PACKAGE_REFERENCE.md) · [Examples](../../examples/README.md) · [Schema adoption](../upgrade.md)
 
+This guide follows the prepared 1.3.0 source. Candidate-only additions are labeled; published 1.2.0
+consumers should use the tagged dependency contract and upgrade guidance.
+
 ## Fit, requirements and non-goals
 
 Use this library when your application owns email intent and wants an encrypted SQL queue, explicit
@@ -55,6 +58,9 @@ Persist the identity/content before calling; after an unresolved transaction dis
 and recover with the same key on a fresh connection. See [the detailed contract](../reference/idempotency.md).
 
 ## Worker
+
+The lease and connection-recovery behavior in this section is prepared for 1.3.0 and is not in published
+1.2.0.
 
 Input: a connection factory (`workerConnectionFactory()`), crypto/context provider, renderer, transport,
 PSR logger and an optional processing lease (default 300 seconds).

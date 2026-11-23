@@ -2,6 +2,9 @@
 
 [Guides](README.md) · [Lifecycle and clocks](../book/worker.md) · [Typed composition](../examples/worker-runner.php)
 
+This guide describes the prepared 1.3.0 source. Connection recovery, processing leases and entity-type
+scoped batches are not included in the published 1.2.0 package.
+
 `EmailQueueWorker` processes one batch when the application calls `processBatch()`. There is no
 bundled daemon/bootstrap script. Your DI container supplies a connection factory, crypto/context
 provider, renderer, transport and a PSR-3 logger; Monolog is not required. The [example](../examples/worker-runner.php)
@@ -9,8 +12,9 @@ defines dependency-taking functions and does nothing at include time.
 
 ## Application bootstrap
 
-1. Apply the correct [fresh/upgrade SQL](../upgrade.md) before keyed callers run, including the worker's
-   claim index `005`.
+1. Apply the correct [fresh/upgrade SQL](../upgrade.md) before keyed callers run. For an existing table,
+   apply claim index `005` unless an index led by `(status, priority, id)` already exists; without one the
+   worker still runs but candidate reads scan the table.
 2. Pass a connection factory, a `Closure(): PDO` that opens a new dedicated exception-mode connection
    with autocommit enabled (the MySQL/MariaDB default) and applies your session settings each time it is
    called. The worker rejects a connection without autocommit, or not in exception error mode, before
@@ -25,9 +29,9 @@ defines dependency-taking functions and does nothing at include time.
 6. Call `processBatch(50)` from your application's supervised process. Select batch size/polling/supervision
    in the application.
 7. For a worker dedicated to one entity type in a shared queue, call `processBatchByEntityType('admin', 50)`
-   instead (Unreleased). Every type, and rows without a type, still need a worker: a scoped batch only
+   instead (prepared for 1.3.0; unpublished). Every type, and rows without a type, still need a worker: a scoped batch only
    reclaims leases of its own type, and only `processBatch()` takes rows whose `entity_type` is NULL.
-   Behind a large backlog of other types, apply the optional [schema 006](../upgrade.md#scoped-batch-index-006-unreleased).
+   Behind a large backlog of other types, apply the optional [schema 006](../upgrade.md#scoped-batch-index-006).
 
 Keyed worker comparisons, retry deadlines and sent timestamps are database UTC even when its session
 is local. NULL-token/pre-003 legacy work keeps its existing local clock behavior. The worker discovers

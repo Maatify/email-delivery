@@ -1,7 +1,8 @@
 -- Install order (see docs/upgrade.md):
 --   fresh install: 001, 002, then 005;
 --   legacy table from before the keyed API (no enqueue_receipt_id): 002, 003 (once), then 005;
---   1.2.0 install that already applied 002 and 003: only 005. Never re-run 003.
+--   existing keyed schema (001+002 or 002+003), including 1.2.0: only 005 if no equivalent index exists.
+-- Choose by inspecting the installed schema, not by assuming the migration history. Never re-run 003.
 -- Raw AES-GCM bytes require binary columns. Keyed timestamps use UTC; legacy timing retains its prior contract.
 CREATE TABLE IF NOT EXISTS cd_email_queue (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,

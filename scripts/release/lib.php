@@ -181,33 +181,72 @@ function verifyIdentity(string $root, string $version): void
     $readme = read($root . '/README.md');
     ensure(str_contains($readme, 'Release artifact target: **' . $version . '**'), 'README lacks exact artifact identity.');
     ensure(str_contains($readme, 'composer require maatify/email-delivery:' . $version), 'README lacks exact installation target.');
+    $baseline = $target['published_baseline_observed'] ?? null;
+    ensure(is_string($baseline) && preg_match('/\A\d+\.\d+\.\d+\z/', $baseline) === 1 && $baseline !== $version,
+        'A distinct exact published baseline is required.');
     $publicationState = $target['publication_state_current'] ?? 'unpublished';
     ensure(in_array($publicationState, ['unpublished', 'published'], true), 'Unknown publication state.');
     $published = $publicationState === 'published';
+    $security = read($root . '/SECURITY.md');
+    $securityFacts = preg_replace('/\s+/', ' ', $security);
+    ensure(is_string($securityFacts), 'Cannot normalize security publication facts.');
+    $readmeFacts = preg_replace('/\s+/', ' ', $readme);
+    ensure(is_string($readmeFacts), 'Cannot normalize README publication facts.');
+    $publishedAt = $published ? ($target['published_at'] ?? null) : null;
+    $publishedDate = null;
+    if ($published) {
+        ensure(is_string($publishedAt), 'Published timestamp is required.');
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s\Z', $publishedAt, new \DateTimeZone('UTC'));
+        ensure($date !== false && $date->format('Y-m-d\TH:i:s\Z') === $publishedAt, 'Invalid actual publication timestamp.');
+        $publishedDate = $date->format('Y-m-d');
+    }
+    $latestPublishedReadmeLine = $published
+        ? 'The latest published version is [' . $version . '](https://github.com/Maatify/email-delivery/releases/tag/v' . $version . '),'
+        : 'The latest published version remains [' . $baseline . '](https://github.com/Maatify/email-delivery/releases/tag/v' . $baseline . '),';
+    ensure(str_contains($readme, $latestPublishedReadmeLine), 'README latest published release link does not match publication state.');
     if (!$published) {
         ensure(str_contains($readme, 'unpublished') && str_contains($readme, 'only after'), 'Missing pre-publication installation boundary.');
+        ensure(str_contains($securityFacts, 'Version **' . $baseline . '** is the latest **published** version within the supported 1.x line.'),
+            'Security policy latest published version differs from the observed baseline.');
+        ensure(str_contains($securityFacts, 'Version **' . $version . '** is being prepared and is **unpublished**'),
+            'Security policy must identify the target as unpublished.');
     } else {
         ensure(str_contains($readme, 'Publication state: **published**'), 'Live README must report publication explicitly.');
+        ensure(!str_contains($readme, 'The latest published version remains [' . $baseline . ']'),
+            'README still identifies the previous baseline as latest after publication.');
+        ensure(!str_contains($readme, 'only after ' . $version . ' is published')
+            && !str_contains($readme, 'Until then, install the latest published'),
+            'README retains pre-publication installation guidance.');
+        $publishedIntro = 'The latest published version is [' . $version . '](https://github.com/Maatify/email-delivery/releases/tag/v'
+            . $version . '), published on ' . $publishedDate . ' UTC and verified as an exact Composer dist installation.';
+        ensure(str_contains($readmeFacts, $publishedIntro), 'README publication date/availability paragraph is stale or inconsistent.');
+        ensure(!str_contains($readmeFacts, 'unpublished') && !str_contains($readmeFacts, $version . ' candidate')
+            && !str_contains($readmeFacts, 'does not make that version available from Packagist'),
+            'README still describes the published target as an unpublished candidate.');
+        ensure(str_contains($securityFacts, 'Version **' . $version . '** is the latest **published** version within the supported 1.x line.'),
+            'Security policy must identify the target as the latest published version.');
+        ensure(!str_contains($securityFacts, 'Version **' . $baseline . '** is the latest **published** version')
+            && !str_contains($securityFacts, 'Version **' . $version . '** is being prepared and is **unpublished**'),
+            'Security policy retains stale publication state.');
     }
     ensure(str_contains($readme, '## Public Runtime API'), 'Missing README API overview.');
     $changelog = read($root . '/CHANGELOG.md');
+    $compareBase = $published ? $version : ($target['published_baseline_observed'] ?? null);
+    ensure(is_string($compareBase) && str_contains($changelog,
+        '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v' . $compareBase . '...HEAD'),
+        'Unreleased comparison must use the target tag after publication, or the latest published baseline before it.');
     if (!$published) {
         ensure(str_contains($changelog, '## [' . $version . "]\n"), 'Missing undated exact-target changelog section.');
         ensure(!str_contains($changelog, 'releases/tag/v' . $version), 'Unpublished target must not link to a nonexistent release.');
         $parts = explode('## [' . $version . ']', $changelog, 2);
         ensure(preg_match('/^### /m', $parts[0]) !== 1, 'Allocated changes remain under Unreleased.');
     } else {
-        $publishedAt = $target['published_at'] ?? null;
-        ensure(is_string($publishedAt), 'Published timestamp is required.');
-        $date = \DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s\Z', $publishedAt, new \DateTimeZone('UTC'));
-        ensure($date !== false && $date->format('Y-m-d\TH:i:s\Z') === $publishedAt, 'Invalid actual publication timestamp.');
-        ensure(str_contains($changelog, '## [' . $version . '] - ' . $date->format('Y-m-d')), 'Live changelog needs the actual publication date.');
+        ensure(str_contains($changelog, '## [' . $version . '] - ' . $publishedDate), 'Live changelog needs the actual publication date.');
         ensure(str_contains($changelog, '[' . $version . ']: https://github.com/Maatify/email-delivery/releases/tag/v' . $version), 'Live release link is missing.');
         $qualified = $target['qualified_sha'] ?? null;
         ensure(is_string($qualified) && preg_match('/\A[a-f0-9]{40}\z/', $qualified) === 1, 'Qualified immutable SHA required.');
         ensure(($target['publication_evidence_url'] ?? null) === 'https://github.com/Maatify/email-delivery/releases/download/v' . $version . '/publication-verification.json', 'Exact external publication evidence is required.');
     }
-    $security = read($root . '/SECURITY.md');
     ensure(str_contains($security, '**' . $version . '**') && str_contains($security, '| 1.x'), 'Security identity/support is inconsistent.');
     ensure(str_contains($security, $published ? '**published**' : 'unpublished') && str_contains($security, 'security@maatify.dev'), 'Security lifecycle/reporting mismatch.');
     foreach (['docs/guides/USAGE_GUIDE.md', 'docs/reference/PACKAGE_REFERENCE.md', 'examples/README.md', 'llms.txt', 'CONTRIBUTING.md', 'CODE_OF_CONDUCT.md', 'LICENSE'] as $file) {
@@ -235,7 +274,7 @@ function verifyZip(string $zipPath, string $sourceRoot, array $required): array
         $attributes = 0;
         ensure($zip->getExternalAttributesIndex($i, $operatingSystem, $attributes) && is_int($attributes), 'Cannot inspect archive entry type.');
         ensure((($attributes >> 16) & 0170000) !== 0120000, 'Archive symlinks are not permitted.');
-        ensure(preg_match('~(^|/)(\.git|\.env[^/]*|vendor|tests|scripts|\.github|\.idea|\.vscode|llm|coverage|logs|var)(/|$)|(^|/)(composer\.lock|\.DS_Store|Thumbs\.db|[^/]*\.log|[^/]*\.patch|phpunit\.xml|phpstan\.neon)$~', $path) !== 1, 'Prohibited archive content: ' . $path);
+        ensure(preg_match('~(^|/)(\.git|\.claude|\.env[^/]*|vendor|tests|scripts|\.github|\.idea|\.vscode|llm|coverage|logs|var)(/|$)|(^|/)(composer\.lock|\.DS_Store|Thumbs\.db|[^/]*\.log|[^/]*\.patch|phpunit\.xml|phpstan\.neon)$~', $path) !== 1, 'Prohibited archive content: ' . $path);
         ensure(!array_key_exists($path, $entries), 'Duplicate archive entry: ' . $path);
         $bytes = $zip->getFromIndex($i);
         ensure(is_string($bytes), 'Cannot read archive entry: ' . $path);

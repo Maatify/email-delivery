@@ -5,9 +5,10 @@
 
 ## Artifact identity
 
-Version **1.2.0** is **published** within the supported 1.x line. Its tagged artifact preserves the
-historical pre-publication snapshot recorded during qualification. Publication does not change the
-security reporting route or create a different support policy.
+Version **1.2.0** is the latest **published** version within the supported 1.x line. Version **1.3.0**
+is being prepared and is **unpublished**; do not treat this branch as an available release. The 1.2.0
+tagged artifact and its publication evidence remain immutable. Publication does not change the security
+reporting route or create a different support policy.
 
 ## Supported Versions
 

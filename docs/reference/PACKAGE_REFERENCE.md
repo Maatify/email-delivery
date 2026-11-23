@@ -3,23 +3,26 @@
 [Usage Guide](../guides/USAGE_GUIDE.md) · [Examples](../../examples/README.md) · [Schema adoption](../upgrade.md)
 
 This is the canonical supported public/runtime/behavioral reference and complete Public Runtime API
-inventory for this package. It describes the published **1.2.0** contract plus the worker changes marked
-**Unreleased**; [publication evidence](../releases/1.2.0-publication.md) is separate from this API reference.
-Exact package/dependency/platform/autoload facts remain owned by [composer.json](../../composer.json).
+inventory for this package. It describes the published **1.2.0** contract and the **prepared, unpublished
+1.3.0 candidate**; [1.2.0 publication evidence](../releases/1.2.0-publication.md) is separate from this API reference.
+Exact package/dependency/platform/autoload facts for the candidate source remain owned by [composer.json](../../composer.json).
 The specialized [keyed reference](idempotency.md) and [synthetic reference](synthetic-recording.md)
 are normative constituent chapters of this reference within their named scopes; their detailed rules
 are linked rather than redefined here. Guides/examples explain use and do not create extra contracts.
 
 ## Runtime requirements and boundaries
 
-PHP ^8.2, JSON and PDO are declared requirements. `maatify/crypto`, Twig, PHPMailer (`^6.9 || ^7.0`), PSR logging and
-`symfony/polyfill-mbstring` are production dependencies; inject instances rather than relying on a framework or environment loader.
+PHP ^8.2, JSON and PDO are declared requirements. In the 1.3.0 candidate, `maatify/crypto`, Twig,
+PHPMailer (`^6.9 || ^7.0`), PSR logging and `symfony/polyfill-mbstring` are production dependencies;
+inject instances rather than relying on a framework or environment loader. Published 1.2.0 requires
+PHPMailer `^6.9` and does not directly require the polyfill. The broadened PHPMailer constraint and
+direct polyfill requirement are not available in a published release yet.
 SQL adapters use MySQL/MariaDB/PDO MySQL and package schema. SQLite appears only in legacy tests.
 The application owns email intent, authentication/authorization, PDO/keys, template files, SMTP policy,
 process supervision, log redaction, schema migration and synthetic cleanup scheduling.
 
-Queue acceptance does not establish SMTP/mailbox delivery or exactly-once external effects; the worker
-retries interrupted `processing` jobs at-least-once (Unreleased). Synthetic recording does not establish
+Queue acceptance does not establish SMTP/mailbox delivery or exactly-once external effects; the 1.3.0
+candidate worker retries interrupted `processing` jobs at-least-once. Synthetic recording does not establish
 real acceptance, HTTP timing equivalence or complete prevention of account enumeration. There is no HTTP
 endpoint or built-in daemon.
 
@@ -88,7 +91,7 @@ increments attempts and marks processing under a transaction, commits, then decr
 It reads only the real queue. Receipt-bound rows use database UTC; NULL-token legacy and pre-binding
 tables retain their local clock behavior. No worker session timezone is silently changed.
 SMTP retry delays are 30/60/120 seconds; other failures use 60/300/900; attempt 4 permanently fails.
-**Unreleased.** `processBatchByEntityType(entityType, limit=50)` processes one batch of the rows whose
+**Prepared for 1.3.0; unpublished.** `processBatchByEntityType(entityType, limit=50)` processes one batch of the rows whose
 `entity_type` equals the given type byte for byte (case, accents and trailing spaces count). The filter
 applies to both candidate reads and to the primary-key locking read that re-checks them; the batch reclaims
 and settles at the cap only rows of its own type. A NULL `entity_type` is taken only by `processBatch()`. An
@@ -98,7 +101,7 @@ The host owns supervision and investigation of ambiguous delivery. Claim or pers
 escape; do not infer that every worker failure is swallowed. See [worker](../book/worker.md)
 and [retry behavior](../book/retry-mechanism.md).
 
-**Unreleased.** The first constructor argument is `PDO|Closure(): PDO`. A factory must return a new
+**Prepared for 1.3.0; unpublished.** The first constructor argument is `PDO|Closure(): PDO`. A factory must return a new
 exception-mode connection, and a `PDO` instance must be in exception error mode too (checked before every
 claim). On MySQL/MariaDB every worker connection must have autocommit enabled (a `PDO` instance is
 checked before every claim, a factory connection when created). A connection that fails

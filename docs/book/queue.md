@@ -2,6 +2,9 @@
 
 [Book](README.md) · [Keyed API reference](../reference/idempotency.md) · [Install/upgrade](../upgrade.md)
 
+This chapter describes the prepared 1.3.0 worker where noted. Published 1.2.0 does not reclaim
+interrupted `processing` jobs through a lease.
+
 `cd_email_queue` stores encrypted recipient and template payload, their IV/tag/key IDs, plaintext
 routing/template metadata, priority, due/retry timestamps, attempts and state. It stores template
 context, **not pre-rendered HTML**. Rendering happens later in the worker.
@@ -23,8 +26,8 @@ Keyed schedule/timestamps are UTC. Legacy schedules retain their previous wall-c
 The worker's [per-row clock table](worker.md#clock-domains) explains mixed-table processing.
 Lower numeric priority sorts first, then ID; a batch limit bounds selection, not external delivery time.
 
-The worker selects `pending` jobs whose schedule and optional retry deadline are due, and `processing`
-jobs whose [processing lease](worker.md#processing-lease) has expired. Its state transition and
+The 1.3.0 candidate worker selects `pending` jobs whose schedule and optional retry deadline are due,
+and `processing` jobs whose [processing lease](worker.md#processing-lease) has expired. Its state transition and
 operational failure boundaries are documented in [worker](worker.md); a receipt is not an SMTP delivery
 receipt or a mechanism to revive `processing` jobs.
 
