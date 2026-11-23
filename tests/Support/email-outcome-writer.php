@@ -8,6 +8,7 @@ declare(strict_types=1);
  * Usage: php email-outcome-writer.php <directory> <row id>
  */
 
+use Tests\Support\ChildProcessFile;
 use Tests\Support\IsolatedEmailMysqlTestCase;
 
 require dirname(__DIR__, 2) . '/vendor/autoload.php';
@@ -16,8 +17,7 @@ $directory = (string) ($argv[1] ?? '');
 $id = (int) ($argv[2] ?? 0);
 $report = static function (string $name, string $value) use ($directory): void {
     // Written atomically: the parent only ever sees a complete file.
-    file_put_contents("$directory/$name.tmp", $value);
-    rename("$directory/$name.tmp", "$directory/$name");
+    ChildProcessFile::write("$directory/$name", $value);
 };
 
 $pdo = IsolatedEmailMysqlTestCase::connection();

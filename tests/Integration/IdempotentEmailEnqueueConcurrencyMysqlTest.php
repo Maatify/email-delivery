@@ -13,6 +13,8 @@ final class IdempotentEmailEnqueueConcurrencyMysqlTest extends IsolatedEmailMysq
     private string $dir = '';
     /** @var array<string, resource> */
     private array $children = [];
+    /** Test-only pause inside each child's atomic write of a file whose content this parent reads. */
+    private int $childWriteDelayMs = 0;
 
     protected function setUp(): void
     {
@@ -59,7 +61,7 @@ final class IdempotentEmailEnqueueConcurrencyMysqlTest extends IsolatedEmailMysq
     {
         $spec = $this->dir . '/' . $name . '.spec';
         file_put_contents($spec, json_encode(['dir' => $this->dir, 'name' => $name, 'namespace' => $namespace,
-            'key' => 'same-key', 'context' => $context, 'hold' => $hold], JSON_THROW_ON_ERROR));
+            'key' => 'same-key', 'context' => $context, 'hold' => $hold, 'write_delay_ms' => $this->childWriteDelayMs], JSON_THROW_ON_ERROR));
         $process = proc_open([PHP_BINARY, dirname(__DIR__) . '/Support/email-enqueue-worker.php', $spec], [
             0 => ['file', '/dev/null', 'r'], 1 => ['file', $this->dir . '/' . $name . '.stdout', 'w'],
             2 => ['file', $this->dir . '/' . $name . '.stderr', 'w'],
@@ -68,6 +70,10 @@ final class IdempotentEmailEnqueueConcurrencyMysqlTest extends IsolatedEmailMysq
         $this->children[$name] = $process;
     }
 
+    /**
+     * Waits for a child file and returns its content. A file whose content is read here (.connection, .result) is
+     * written atomically by the child (ChildProcessFile), so once it exists its content is complete.
+     */
     private function waitFile(string $name, string $suffix): string
     {
         $path = $this->dir . '/' . $name . '.' . $suffix;
@@ -120,16 +126,20 @@ final class IdempotentEmailEnqueueConcurrencyMysqlTest extends IsolatedEmailMysq
         self::assertSame(count($ids), $waiting, 'All named competitor connections must really wait on the uncommitted winner.');
     }
 
-    /** @return iterable<string, array{int}> */
+    /** @return iterable<string, array{int, int}> */
     public static function competitors(): iterable
     {
-        yield 'two processes' => [1];
-        yield 'four processes' => [3];
+        yield 'two processes' => [1, 0];
+        yield 'four processes' => [3, 0];
+        // Each child pauses 250 ms between creating a file this test reads and writing its content: a non-atomic
+        // write would expose an empty file to waitFile() for that long (issue #15).
+        yield 'two processes, slow child file writes' => [1, 250];
     }
 
     #[DataProvider('competitors')]
-    public function testConcurrentSameKeyHasOneCommittedWinnerAndFreshProcessReplay(int $count): void
+    public function testConcurrentSameKeyHasOneCommittedWinnerAndFreshProcessReplay(int $count, int $childWriteDelayMs): void
     {
+        $this->childWriteDelayMs = $childWriteDelayMs;
         $this->start('winner', true);
         $this->waitFile('winner', 'inserted');
         $names = [];
