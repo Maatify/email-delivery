@@ -50,7 +50,9 @@ final class ChildProcessFileTest extends TestCase
         $finalSeenAt = null;
         $deadline = microtime(true) + 10;
         do {
-            $running = proc_get_status($child)['running'];
+            // Before PHP 8.3 only the first status call after the exit reports the exit code; proc_close() then
+            // returns -1. So the exit code is taken from that status.
+            $status = proc_get_status($child);
             clearstatcache();
             if ($temporarySeenAt === null && (glob($path . '.*.tmp') ?: []) !== []) {
                 $temporarySeenAt = microtime(true);
@@ -60,10 +62,11 @@ final class ChildProcessFileTest extends TestCase
                 $reads[] = (string) file_get_contents($path);
             }
             usleep(1_000);
-        } while ($running && microtime(true) < $deadline);
-        $exit = proc_close($child);
+        } while ($status['running'] && microtime(true) < $deadline);
+        proc_close($child);
 
-        self::assertSame(0, $exit, 'Child stderr: ' . file_get_contents($this->dir . '/stderr'));
+        self::assertFalse($status['running'], 'The child finished in time.');
+        self::assertSame(0, $status['exitcode'], 'Child stderr: ' . file_get_contents($this->dir . '/stderr'));
         self::assertSame('', file_get_contents($this->dir . '/stderr'));
         self::assertNotNull($finalSeenAt, 'The parent saw the finished file.');
         self::assertSame([strlen($expected)], array_values(array_unique(array_map('strlen', $reads))), 'Every read of the file returned its whole content.');
