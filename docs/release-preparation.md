@@ -97,6 +97,18 @@ files or bytes fail. No source-only delivery exception is selected for this pack
 
 Until that work is authorized and performed, 1.3.0 publication and post-publication verification are
 **NOT RUN**. A local archive install or runtime harness does not substitute for this external integrity
-evidence. After publication, retain installed metadata/reference, manifest/file hashes and logs; refresh
-the live publication date/link and Unreleased compare base without rewriting the immutable artifact.
-Any tracked correction to a published artifact needs a new version.
+evidence.
+
+After publication, reconcile the **full live-document state** on a follow-up documentation change. Update
+the actual date, release link and Unreleased compare base in `CHANGELOG.md`; make `README.md` and
+`SECURITY.md` identify 1.3.0 as published/latest and remove pre-publication install wording. Reconcile
+candidate/unpublished wording and make the behavior available-state accurate in `SECURITY_AUDIT.md`,
+`docs/README.md`, `docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md`,
+`docs/book/{architecture,introduction,queue,retry-mechanism,transport,worker}.md`,
+`docs/guides/USAGE_GUIDE.md`, `docs/how-to/{send-email,setup-worker}.md`,
+`docs/reference/{PACKAGE_REFERENCE,idempotency}.md`, `docs/upgrade.md`, this guide,
+`docs/releases/1.3.0-notes.md`, `examples/README.md`, `examples/worker-runner.php`, and
+`docs/assets/architecture-diagram.svg`. Convert the draft notes to the published release notes. Keep
+`docs/releases/1.3.0-review.md` as a historical preparation snapshot. Re-run documentation, example,
+CI and published-artifact verification after that reconciliation. Do not rewrite the immutable release
+artifact; any tracked correction to it needs a new version.

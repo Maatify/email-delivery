@@ -87,9 +87,10 @@ Monolog is not a package dependency.
 
 Apply the [schema installation/upgrade](docs/upgrade.md) before adopting the keyed API. Do not run
 all numbered SQL files on a fresh installation: the binding upgrade is for an existing legacy table.
-The 1.3.0 candidate's worker claim index (`005`): fresh installs run 001, 002, then 005; legacy tables run
-002, 003, then 005; 1.2.0 installs that already applied 002 and 003 run only 005. Optional `006`
-(also part of the candidate) indexes scoped batches; apply it after 005 only if you use them.
+The 1.3.0 candidate's worker claim index (`005`): fresh installs run 001, 002, then 005; legacy tables
+without `enqueue_receipt_id` run 002, 003, then 005. If the installed schema already has the binding and
+receipt table (whether from 001+002 or 002+003), apply only 005 and only when no equivalent claim index
+exists. Optional `006` (also part of the candidate) indexes scoped batches; apply it after 005 only if you use them.
 
 Synthetic recording uses an optional independent table and separate crypto domains. Its retention is
 explicitly configured by the consumer; cleanup is scheduled externally. It provides no constant-time or

@@ -194,6 +194,8 @@ final class ReleaseArtifactVerificationTest extends TestCase
         yield 'stale live date' => ['CHANGELOG.md', '## [1.3.0] - 2026-11-23', '## [1.3.0] - 2026-11-22'];
         yield 'missing release link' => ['CHANGELOG.md', '[1.3.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.3.0', '[1.3.0]: https://example.invalid'];
         yield 'stale published compare base' => ['CHANGELOG.md', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.3.0...HEAD', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.2.0...HEAD'];
+        yield 'stale latest published README baseline' => ['README.md', 'The latest published version is [1.3.0]', 'The latest published version remains [1.2.0]'];
+        yield 'stale latest published security baseline' => ['SECURITY.md', 'Version **1.3.0** is the latest **published** version within the supported 1.x line.', 'Version **1.2.0** is the latest **published** version within the supported 1.x line.'];
         yield 'missing publication evidence' => ['release-target.json', 'publication-verification.json', 'missing-evidence.json'];
         yield 'stale live README' => ['README.md', 'Publication state: **published**', 'Publication state: pending'];
     }
@@ -228,7 +230,10 @@ final class ReleaseArtifactVerificationTest extends TestCase
 
         $readmePath = $this->directory . '/README.md';
         $readme = (string) file_get_contents($readmePath);
-        file_put_contents($readmePath, str_replace('Publication state: **unpublished**', 'Publication state: **published**', $readme));
+        $readme = str_replace('Publication state: **unpublished**', 'Publication state: **published**', $readme);
+        $readme = str_replace('The latest published version remains [1.2.0](https://github.com/Maatify/email-delivery/releases/tag/v1.2.0),', 'The latest published version is [1.3.0](https://github.com/Maatify/email-delivery/releases/tag/v1.3.0),', $readme);
+        $readme = str_replace("Run that exact install command **only after 1.3.0 is published**. Until then, install the latest published\nversion with `composer require maatify/email-delivery:1.2.0`.", 'The exact 1.3.0 install command is available from Packagist.', $readme);
+        file_put_contents($readmePath, $readme);
 
         $changelogPath = $this->directory . '/CHANGELOG.md';
         $changelog = (string) file_get_contents($changelogPath);
@@ -238,6 +243,8 @@ final class ReleaseArtifactVerificationTest extends TestCase
         file_put_contents($changelogPath, $changelog);
 
         $securityPath = $this->directory . '/SECURITY.md';
-        file_put_contents($securityPath, (string) file_get_contents($securityPath) . "\nFixture state: **1.3.0** is **published**.\n");
+        $security = (string) file_get_contents($securityPath);
+        $security = str_replace("Version **1.2.0** is the latest **published** version within the supported 1.x line. Version **1.3.0**\nis being prepared and is **unpublished**; do not treat this branch as an available release. The 1.2.0\ntagged artifact and its publication evidence remain immutable.", 'Version **1.3.0** is the latest **published** version within the supported 1.x line. Its tagged artifact and publication evidence remain immutable.', $security);
+        file_put_contents($securityPath, $security);
     }
 }

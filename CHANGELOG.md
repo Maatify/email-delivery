@@ -93,8 +93,10 @@ Published dates below use the corresponding GitHub Release publication date in U
   requirements do not change.
 - Delivery is at-least-once: a message may be sent twice when its `sent` status cannot be recorded
   even after one reconnect, or when one render and send outlasts the lease.
-- One additive index (`005`). Fresh installs run 001, 002, then 005; legacy tables run 002, 003, then 005;
-  1.2.0 installs that already applied 002 and 003 run only 005. It is built with `ALGORITHM=INPLACE,
+- One additive index (`005`). Fresh installs run 001, 002, then 005; legacy tables without the binding run
+  002, 003, then 005. Existing keyed schemas (001+002 or 002+003), including 1.2.0, need only 005 when
+  no equivalent index exists. Choose by inspecting the installed schema, not assumed migration history.
+  It is built with `ALGORITHM=INPLACE,
   LOCK=NONE`: reads and writes continue, but it still takes brief metadata locks and waits for open
   transactions, so run it off-peak. The worker works without it, but its candidate reads then scan the
   table (without locks). Rows left `processing` by an earlier version become claimable on the first

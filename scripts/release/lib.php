@@ -181,13 +181,37 @@ function verifyIdentity(string $root, string $version): void
     $readme = read($root . '/README.md');
     ensure(str_contains($readme, 'Release artifact target: **' . $version . '**'), 'README lacks exact artifact identity.');
     ensure(str_contains($readme, 'composer require maatify/email-delivery:' . $version), 'README lacks exact installation target.');
+    $baseline = $target['published_baseline_observed'] ?? null;
+    ensure(is_string($baseline) && preg_match('/\A\d+\.\d+\.\d+\z/', $baseline) === 1 && $baseline !== $version,
+        'A distinct exact published baseline is required.');
     $publicationState = $target['publication_state_current'] ?? 'unpublished';
     ensure(in_array($publicationState, ['unpublished', 'published'], true), 'Unknown publication state.');
     $published = $publicationState === 'published';
+    $security = read($root . '/SECURITY.md');
+    $securityFacts = preg_replace('/\s+/', ' ', $security);
+    ensure(is_string($securityFacts), 'Cannot normalize security publication facts.');
+    $latestPublishedReadmeLine = $published
+        ? 'The latest published version is [' . $version . '](https://github.com/Maatify/email-delivery/releases/tag/v' . $version . '),'
+        : 'The latest published version remains [' . $baseline . '](https://github.com/Maatify/email-delivery/releases/tag/v' . $baseline . '),';
+    ensure(str_contains($readme, $latestPublishedReadmeLine), 'README latest published release link does not match publication state.');
     if (!$published) {
         ensure(str_contains($readme, 'unpublished') && str_contains($readme, 'only after'), 'Missing pre-publication installation boundary.');
+        ensure(str_contains($securityFacts, 'Version **' . $baseline . '** is the latest **published** version within the supported 1.x line.'),
+            'Security policy latest published version differs from the observed baseline.');
+        ensure(str_contains($securityFacts, 'Version **' . $version . '** is being prepared and is **unpublished**'),
+            'Security policy must identify the target as unpublished.');
     } else {
         ensure(str_contains($readme, 'Publication state: **published**'), 'Live README must report publication explicitly.');
+        ensure(!str_contains($readme, 'The latest published version remains [' . $baseline . ']'),
+            'README still identifies the previous baseline as latest after publication.');
+        ensure(!str_contains($readme, 'only after ' . $version . ' is published')
+            && !str_contains($readme, 'Until then, install the latest published'),
+            'README retains pre-publication installation guidance.');
+        ensure(str_contains($securityFacts, 'Version **' . $version . '** is the latest **published** version within the supported 1.x line.'),
+            'Security policy must identify the target as the latest published version.');
+        ensure(!str_contains($securityFacts, 'Version **' . $baseline . '** is the latest **published** version')
+            && !str_contains($securityFacts, 'Version **' . $version . '** is being prepared and is **unpublished**'),
+            'Security policy retains stale publication state.');
     }
     ensure(str_contains($readme, '## Public Runtime API'), 'Missing README API overview.');
     $changelog = read($root . '/CHANGELOG.md');
@@ -211,7 +235,6 @@ function verifyIdentity(string $root, string $version): void
         ensure(is_string($qualified) && preg_match('/\A[a-f0-9]{40}\z/', $qualified) === 1, 'Qualified immutable SHA required.');
         ensure(($target['publication_evidence_url'] ?? null) === 'https://github.com/Maatify/email-delivery/releases/download/v' . $version . '/publication-verification.json', 'Exact external publication evidence is required.');
     }
-    $security = read($root . '/SECURITY.md');
     ensure(str_contains($security, '**' . $version . '**') && str_contains($security, '| 1.x'), 'Security identity/support is inconsistent.');
     ensure(str_contains($security, $published ? '**published**' : 'unpublished') && str_contains($security, 'security@maatify.dev'), 'Security lifecycle/reporting mismatch.');
     foreach (['docs/guides/USAGE_GUIDE.md', 'docs/reference/PACKAGE_REFERENCE.md', 'examples/README.md', 'llms.txt', 'CONTRIBUTING.md', 'CODE_OF_CONDUCT.md', 'LICENSE'] as $file) {

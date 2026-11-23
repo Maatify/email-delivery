@@ -77,10 +77,12 @@ the earlier files of your path:
 | --- | --- |
 | Fresh | 001, 002, then 005 |
 | Legacy table from before the keyed API (no `enqueue_receipt_id`) | 002, 003 (once), then 005 |
-| 1.2.0 that already applied 002 and 003 | **only 005**; never re-run 003 |
+| Existing keyed schema with `enqueue_receipt_id` and the compatible receipt table (including 1.2.0 installs from 001+002 or 002+003) | **only 005 if no equivalent claim index exists**; never run 003 |
 
-A table that already has an index led by `(status, priority, id)` does not need 005. Like 003, it is not
-idempotent: if `idx_email_queue_claim` already exists, do not run it again.
+Choose by inspecting the installed schema, not by assuming which migration sequence an operator used.
+The keyed schema requires the `enqueue_receipt_id` column with its unique index and a compatible
+`cd_email_enqueue_receipts` table. A table that already has an index led by `(status, priority, id)` does
+not need 005. Like 003, it is not idempotent: if `idx_email_queue_claim` already exists, do not run it again.
 
 **What `ALGORITHM=INPLACE, LOCK=NONE` does and does not promise.** Reads and writes on the table
 (concurrent DML) continue while the index is built.
