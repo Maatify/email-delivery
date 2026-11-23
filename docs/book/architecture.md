@@ -20,7 +20,9 @@ authorization, connection/key configuration, process supervision and any HTTP in
 
 ![Acceptance versus processing flow](../assets/email-flow-diagram.svg)
 
-The keyed acceptance transaction contains no SMTP call. Worker row locks protect batch claiming, not
+The worker lease/recovery behavior in this chapter describes the prepared, unpublished 1.3.0 candidate;
+published 1.2.0 does not reclaim interrupted `processing` rows automatically. The keyed acceptance
+transaction contains no SMTP call. Worker row locks protect batch claiming, not
 the external side effect. A crash after claim leaves `processing` until the row's lease expires and a
 later batch claims it again; a transport acceptance followed by lost acknowledgement can be ambiguous.
 Delivery is at-least-once, not exactly-once SMTP. See [worker](worker.md) and [retry limits](retry-mechanism.md).

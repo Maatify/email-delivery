@@ -13,8 +13,8 @@ On a new empty application schema, apply in order:
 
 1. [`001_email_queue.sql`](../schema/mysql/001_email_queue.sql)
 2. [`002_email_enqueue_receipts.sql`](../schema/mysql/002_email_enqueue_receipts.sql)
-3. [`005_email_queue_claim_index.sql`](../schema/mysql/005_email_queue_claim_index.sql) (Unreleased; the
-   worker's claim index, see [claim index](#worker-claim-index-unreleased))
+3. [`005_email_queue_claim_index.sql`](../schema/mysql/005_email_queue_claim_index.sql) (prepared for 1.3.0;
+   unpublished; see [claim index](#worker-claim-index-005))
 
 **Do not apply 003 after fresh 001.** Fresh 001 already includes the nullable immutable binding and
 unique index. The SQL stores raw cipher/IV/tag in binary columns; do not substitute text columns.
@@ -26,7 +26,7 @@ For an existing compatible `cd_email_queue` without `enqueue_receipt_id`:
 1. Back up and inspect the existing engine/columns/indexes. Do not assume `IF NOT EXISTS` proves compatibility.
 2. Apply [`002_email_enqueue_receipts.sql`](../schema/mysql/002_email_enqueue_receipts.sql).
 3. Apply [`003_email_queue_receipt_binding.sql`](../schema/mysql/003_email_queue_receipt_binding.sql) **once**,
-   then [`005_email_queue_claim_index.sql`](../schema/mysql/005_email_queue_claim_index.sql) (Unreleased).
+   then [`005_email_queue_claim_index.sql`](../schema/mysql/005_email_queue_claim_index.sql) (prepared for 1.3.0; unpublished).
 4. Record the migration and verify both tables are InnoDB and the package constraints are present.
 5. Complete the keyed-aware update of **every worker instance** before enabling keyed callers; do not leave an old worker consuming new UTC rows.
 
@@ -66,7 +66,9 @@ DB/PHP settings before letting it process existing keyed jobs. Do not run an aut
 that drops durable identities, and do not bulk reset `processing` rows. Investigate acceptance/SMTP
 ambiguity before an operator acts.
 
-## Worker claim index (Unreleased)
+<a id="worker-claim-index-005"></a>
+
+## Worker claim index 005 — 1.3.0 candidate (unpublished)
 
 Apply [`005_email_queue_claim_index.sql`](../schema/mysql/005_email_queue_claim_index.sql) **once**, after
 the earlier files of your path:
@@ -101,7 +103,9 @@ instants and stamps it exactly, including across daylight saving changes; see th
 session zone for the worker. The worker tells MySQL from MariaDB by the server version the connection
 reports, so a proxy in front of MariaDB must not report a MySQL version.
 
-## Scoped batch index 006 (Unreleased)
+<a id="scoped-batch-index-006"></a>
+
+## Scoped batch index 006 — 1.3.0 candidate (unpublished)
 
 [`006_email_queue_entity_type_claim_index.sql`](../schema/mysql/006_email_queue_entity_type_claim_index.sql) is
 **optional**. Apply it once, after 005, only if workers use `processBatchByEntityType()` behind a large backlog
@@ -111,13 +115,13 @@ with the same online-DDL limits as 005: run it off-peak with no long transaction
 table that already has an index led by `(status, entity_type, priority, id)` does not need it. Measured gains
 are in the [worker book](book/worker.md#index-for-scoped-batches-optional-006).
 
-## PHPMailer 7 (Unreleased)
+## PHPMailer 7 — 1.3.0 candidate (unpublished)
 
 The package accepts `phpmailer/phpmailer` `^6.9 || ^7.0`, so an application can keep PHPMailer 6.9+ or move
 to 7. Nothing in the application changes. CI runs the suite, including a real SMTP send to an isolated test
 server, on PHPMailer 6.9.0 and on the latest 7.x.
 
-## Worker processing lease (Unreleased)
+## Worker processing lease — 1.3.0 candidate (unpublished)
 
 No other SQL change is needed. The upgraded worker stamps and renews `updated_at` on `processing` rows and
 claims a row again once it is older than the lease (default 300 seconds), as described in the

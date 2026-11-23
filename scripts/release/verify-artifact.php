@@ -60,7 +60,7 @@ try {
         'outcome' => 'PASS', 'required_files' => count($required), 'files' => $composer,
         'composer_archive_sha256' => hash_file('sha256', $directory . '/composer-candidate.zip'),
         'git_archive_verified' => $git !== null, 'archive_production_autoload' => 'PASS', 'composer_version' => trim(run(['composer', '--version', '--no-ansi'], $root, $environment)),
-        'semantic_review_reference' => 'docs/releases/1.2.0-review.md',
+        'semantic_review_reference' => 'docs/releases/' . $target . '-review.md',
         'qualification_boundary' => 'Owner-reviewed integration to main; Full Applicable CI and this gate must pass on that same SHA.',
         'publication' => 'Not performed; no tag/release authorization is inferred.'];
     file_put_contents($directory . '/artifact-verification.json', json_encode($report, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT) . "\n");

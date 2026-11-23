@@ -16,5 +16,5 @@ daemon, HTTP endpoint or receipt-retention pruner is supplied. Queue acceptance 
 delivery are different facts.
 
 Start with [schema adoption](../upgrade.md), then [enqueue](../how-to/send-email.md) and
-[worker composition](../how-to/setup-worker.md). Release additions are listed under [1.2.0](../../CHANGELOG.md#120);
-[publication evidence](../releases/1.2.0-publication.md) is recorded separately.
+[worker composition](../how-to/setup-worker.md). Published additions are listed under [1.2.0](../../CHANGELOG.md#120);
+the prepared, unpublished [1.3.0 candidate](../../CHANGELOG.md#130) is separate. The [1.2.0 publication evidence](../releases/1.2.0-publication.md) is recorded separately.

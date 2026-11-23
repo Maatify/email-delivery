@@ -235,7 +235,7 @@ function verifyZip(string $zipPath, string $sourceRoot, array $required): array
         $attributes = 0;
         ensure($zip->getExternalAttributesIndex($i, $operatingSystem, $attributes) && is_int($attributes), 'Cannot inspect archive entry type.');
         ensure((($attributes >> 16) & 0170000) !== 0120000, 'Archive symlinks are not permitted.');
-        ensure(preg_match('~(^|/)(\.git|\.env[^/]*|vendor|tests|scripts|\.github|\.idea|\.vscode|llm|coverage|logs|var)(/|$)|(^|/)(composer\.lock|\.DS_Store|Thumbs\.db|[^/]*\.log|[^/]*\.patch|phpunit\.xml|phpstan\.neon)$~', $path) !== 1, 'Prohibited archive content: ' . $path);
+        ensure(preg_match('~(^|/)(\.git|\.claude|\.env[^/]*|vendor|tests|scripts|\.github|\.idea|\.vscode|llm|coverage|logs|var)(/|$)|(^|/)(composer\.lock|\.DS_Store|Thumbs\.db|[^/]*\.log|[^/]*\.patch|phpunit\.xml|phpstan\.neon)$~', $path) !== 1, 'Prohibited archive content: ' . $path);
         ensure(!array_key_exists($path, $entries), 'Duplicate archive entry: ' . $path);
         $bytes = $zip->getFromIndex($i);
         ensure(is_string($bytes), 'Cannot read archive entry: ' . $path);

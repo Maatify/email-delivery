@@ -2,6 +2,9 @@
 
 [Package Reference](../reference/PACKAGE_REFERENCE.md) · [Examples](../../examples/README.md) · [Schema adoption](../upgrade.md)
 
+This guide follows the prepared 1.3.0 source. Candidate-only additions are labeled; published 1.2.0
+consumers should use the tagged dependency contract and upgrade guidance.
+
 ## Fit, requirements and non-goals
 
 Use this library when your application owns email intent and wants an encrypted SQL queue, explicit

@@ -63,6 +63,7 @@
   "archive": {
     "exclude": [
       "/.github",
+      "/.claude",
       "/tests",
       "/scripts",
       "/vendor",
