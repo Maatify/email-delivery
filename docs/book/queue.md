@@ -2,8 +2,8 @@
 
 [Book](README.md) · [Keyed API reference](../reference/idempotency.md) · [Install/upgrade](../upgrade.md)
 
-This chapter describes the 1.3.0 worker where noted. Published 1.2.0 does not reclaim
-interrupted `processing` jobs through a lease.
+This chapter describes the released 1.3.0 worker. The 1.3.0 package was published on 2026-11-23;
+[1.2.0](../releases/1.2.0-publication.md) does not reclaim interrupted `processing` jobs through a lease.
 
 `cd_email_queue` stores encrypted recipient and template payload, their IV/tag/key IDs, plaintext
 routing/template metadata, priority, due/retry timestamps, attempts and state. It stores template

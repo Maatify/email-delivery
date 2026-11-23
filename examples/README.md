@@ -2,9 +2,9 @@
 
 [Documentation](../docs/README.md) · [Keyed API contract](../docs/reference/idempotency.md) · [Upgrade](../docs/upgrade.md)
 
-These examples target 1.3.0. Worker reconnect, processing lease, scoped batches,
-PHPMailer 7 support and the direct mbstring polyfill requirement were introduced in 1.3.0; published
-1.2.0 consumers should follow its tagged package contract.
+These examples target 1.3.0. Worker reconnect, processing lease, scoped batches, PHPMailer 7 support and the
+direct mbstring polyfill requirement shipped in the released package on 2026-11-23. Version 1.2.0 consumers
+should follow that tagged package contract until upgrading.
 
 These files define functions with injected dependencies. They contain no top-level PDO connections,
 key placeholders, environment loading, SMTP calls or infinite worker loops. Load your Composer

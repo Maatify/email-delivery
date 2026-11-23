@@ -3,9 +3,9 @@
 [Usage Guide](../guides/USAGE_GUIDE.md) · [Examples](../../examples/README.md) · [Schema adoption](../upgrade.md)
 
 This is the canonical supported public/runtime/behavioral reference and complete Public Runtime API
-inventory for this package. It describes the **1.2.0** contract and the **1.3.0 release target**;
-[1.2.0 publication evidence](../releases/1.2.0-publication.md) is separate from this API reference.
-Exact package/dependency/platform/autoload facts for the 1.3.0 release target remain owned by [composer.json](../../composer.json).
+inventory for this package. It describes the released **1.3.0** contract and identifies the earlier **1.2.0**
+contract where relevant. Version 1.3.0 was published on 2026-11-23; see its [publication record](../releases/1.3.0-publication.md).
+Exact package/dependency/platform/autoload facts remain owned by [composer.json](../../composer.json).
 The specialized [keyed reference](idempotency.md) and [synthetic reference](synthetic-recording.md)
 are normative constituent chapters of this reference within their named scopes; their detailed rules
 are linked rather than redefined here. Guides/examples explain use and do not create extra contracts.

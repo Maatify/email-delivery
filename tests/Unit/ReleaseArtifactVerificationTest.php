@@ -59,6 +59,15 @@ final class ReleaseArtifactVerificationTest extends TestCase
         self::assertCount(count($required), verifyZip($path, $this->directory, $required));
     }
 
+    public function testPublishedTargetAllowsFutureUnreleasedChanges(): void
+    {
+        $file = $this->directory . '/CHANGELOG.md';
+        $content = (string) file_get_contents($file);
+        self::assertStringContainsString("## [Unreleased]\n", $content);
+        file_put_contents($file, str_replace("## [Unreleased]\n", "## [Unreleased]\n\n### Added\n- Prepare the next release.\n", $content));
+        verifyIdentity($this->directory, '1.3.0');
+    }
+
     /** @return iterable<string, array{string, string, string}> */
     public static function staleIdentity(): iterable
     {
@@ -66,8 +75,7 @@ final class ReleaseArtifactVerificationTest extends TestCase
         yield 'artifact identity' => ['README.md', 'Release artifact target: **1.3.0**', 'Release artifact target: **1.2.0**'];
         yield 'install target' => ['README.md', 'composer require maatify/email-delivery:1.3.0', 'composer require maatify/email-delivery:1.2.0'];
         yield 'changelog allocation' => ['CHANGELOG.md', '## [1.3.0]', '## [Unreleased legacy allocation]'];
-        yield 'unallocated changes' => ['CHANGELOG.md', '## [Unreleased]', "## [Unreleased]\n\n### Added\nAllocated change left behind."];
-        yield 'unpublished compare base' => ['CHANGELOG.md', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.2.0...HEAD', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.3.0...HEAD'];
+        yield 'published compare base' => ['CHANGELOG.md', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.3.0...HEAD', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.2.0...HEAD'];
         yield 'false release link' => ['CHANGELOG.md', '## [1.3.0]', "## [1.3.0]\n\nhttps://github.com/Maatify/email-delivery/releases/tag/v1.3.0"];
         yield 'security identity' => ['SECURITY.md', '**1.3.0**', '**1.2.0**'];
         yield 'target metadata' => ['release-target.json', '"target": "1.3.0"', '"target": "1.2.0"'];

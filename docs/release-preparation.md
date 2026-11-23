@@ -2,10 +2,10 @@
 
 [Documentation](README.md) · [Package Reference](reference/PACKAGE_REFERENCE.md) · [Target changelog](../CHANGELOG.md#130)
 
-At qualification, version 1.3.0 is the Stable 1.x target and has **not yet been published**.
-Version 1.2.0 was the latest published release at qualification; its immutable artifact and [publication record](releases/1.2.0-publication.md) are
-historical evidence, not a qualification for 1.3.0. This guide records preparation and qualification
-requirements. It does not authorize a tag, GitHub Release, Packagist publication, or production migration.
+Version 1.3.0 is the Stable 1.x release published on 2026-11-23. Its immutable tag and [publication record](releases/1.3.0-publication.md)
+contain the qualified SHA and publication evidence. Version 1.2.0's immutable artifact and [publication record](releases/1.2.0-publication.md)
+remain historical evidence. This guide retains the preparation, qualification and verification procedures; it does not authorize a
+future tag, GitHub Release, Packagist publication, or production migration.
 
 ## Candidate content
 
@@ -20,7 +20,7 @@ SQL or SMTP is run by preparation tooling.
 
 Version 1.3.0 facts must not be attributed to the installed 1.2.0 package. In particular, PHPMailer 7,
 the direct `symfony/polyfill-mbstring` dependency, worker reconnect/recovery, scoped batches, and the
-processing lease are included in the 1.3.0 release target and are absent from published 1.2.0.
+processing lease shipped in the 1.3.0 release and are absent from published 1.2.0.
 
 ## Local commands and CI parity
 
@@ -80,11 +80,11 @@ alongside it.
 
 ## Post-publication verification
 
-After an independently authorized 1.3.0 version becomes externally available, run the maintained local
-command using its full release-qualified SHA:
+After an independently authorized release becomes externally available, run the maintained local
+command using its full release-qualified SHA. For 1.3.0, the exact command was:
 
 ```bash
-composer verify:published -- --version=1.3.0 --sha=FULL_40_CHARACTER_QUALIFIED_SHA
+composer verify:published -- --version=1.3.0 --sha=f72addfaff7da1813e2b1005bf706713512e375b
 ```
 
 The equivalent manual workflow is `published-artifact.yml`; its inputs are the exact version and SHA.
@@ -95,13 +95,15 @@ installed metadata. It rejects source fallback and mismatched source/dist refere
 and compares every installed file against an independent Git export of the qualified SHA. Extra/missing
 files or bytes fail. No source-only delivery exception is selected for this package.
 
-Until that work is authorized and performed, 1.3.0 publication and post-publication verification are
-**NOT RUN**. A local archive install or runtime harness does not substitute for this external integrity
-evidence.
+For 1.3.0, Published Artifact Verification **PASS**: Composer observed `dist` mode, source and dist
+references matched the qualified SHA, and 104 installed files matched an independent Git export byte for byte.
+The exact command exited 0 with Composer 2.10.2 and PHP 8.5.13. See the [publication record](releases/1.3.0-publication.md)
+and attached [verification report](https://github.com/Maatify/email-delivery/releases/download/v1.3.0/publication-verification.json).
+A local archive install or runtime harness does not substitute for this external integrity evidence.
 
-After publication, reconcile the **full live-document state** on a follow-up documentation change. Update
-the actual date, release link and Unreleased compare base in `CHANGELOG.md`; make `README.md` and
-   `SECURITY.md` record the publication facts in the live source. Preserve the immutable qualification snapshot in
+After publication, reconcile the **full live-document state** on a follow-up documentation change. For 1.3.0,
+that reconciliation is submitted separately from the immutable release tag. Update the actual date, release link
+and Unreleased compare base in `CHANGELOG.md`; make `README.md` and `SECURITY.md` record the publication facts in live source. Preserve the immutable qualification snapshot in
    the release artifact. Reconcile current-source wording and make the behavior available-state accurate in `SECURITY_AUDIT.md`,
 `docs/README.md`, `docs/ADR-012-Worker-Connection-Recovery-And-Processing-Lease.md`,
 `docs/book/{architecture,introduction,queue,retry-mechanism,transport,worker}.md`,

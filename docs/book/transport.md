@@ -6,8 +6,8 @@
 `send(string $recipientEmail, RenderedEmailDTO $email, ?string $replyToEmail=null): void` is the
 network boundary. It creates PHPMailer in exception mode, configures SMTP authentication, sets
 From/recipient, optional Reply-To, literal subject and HTML body, then calls `send()`. The published
-1.2.0 dependency accepts PHPMailer 6.9; PHPMailer 7 support was added in 1.3.0.
-See [PHPMailer 6.9 and 7](#phpmailer-69-and-7).
+1.2.0 dependency accepts PHPMailer 6.9; the published 1.3.0 release adds PHPMailer 7 support.
+See the [1.3.0 publication record](../releases/1.3.0-publication.md) and [PHPMailer 6.9 and 7](#phpmailer-69-and-7).
 
 | Configuration | Actual behavior |
 | --- | --- |

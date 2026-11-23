@@ -2,7 +2,7 @@
 
 [Book](README.md) · [Worker setup](../how-to/setup-worker.md) · [Retry details](retry-mechanism.md)
 
-This chapter describes the 1.3.0 worker. Its connection recovery,
+This chapter describes the released 1.3.0 worker, published on 2026-11-23. Its connection recovery,
 processing lease, and entity-type-scoped batch behavior are not part of published 1.2.0.
 
 `EmailQueueWorker::processBatch(int $limit=50): void` processes one batch; it is not a daemon.

@@ -1,6 +1,8 @@
 # Schema installation and upgrade
 
-[Documentation](README.md) · [API contract](reference/idempotency.md) · [Release preparation](release-preparation.md)
+[Documentation](README.md) · [API contract](reference/idempotency.md) · [Release preparation](release-preparation.md) · [1.3.0 publication record](releases/1.3.0-publication.md)
+
+These instructions cover fresh installs and upgrades to the released 1.3.0 package (published 2026-11-23).
 
 Apply the package-owned MySQL/MariaDB SQL before adopting keyed enqueue. The package does not
 run migrations, silently ALTER incompatible tables, backfill identities or deduplicate old content.

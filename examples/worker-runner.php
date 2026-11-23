@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Maatify\EmailDelivery\Documentation\Examples;
 
-// This example follows 1.3.0; its connection recovery and processing lease are absent from 1.2.0.
+// This example follows 1.3.0; it was published on 2026-11-23, and its connection recovery and processing lease are absent from 1.2.0.
 
 use Closure;
 use Maatify\Crypto\Contract\CryptoContextProviderInterface;

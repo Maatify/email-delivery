@@ -2,7 +2,8 @@
 
 [Documentation](../README.md) · [Upgrade](../upgrade.md) · [Typed examples](../examples/README.md)
 
-This additive API is available starting with [1.2.0](../../CHANGELOG.md#120). Legacy `enqueue(): void` deliberately continues to insert
+This additive API is available starting with [1.2.0](../../CHANGELOG.md#120) and remains part of the current
+[1.3.0 release](../releases/1.3.0-publication.md). Legacy `enqueue(): void` deliberately continues to insert
 on each call. There is no content-only deduplication or backfill of legacy jobs.
 
 ## Ports and construction

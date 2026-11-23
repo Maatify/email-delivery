@@ -5,14 +5,18 @@
 
 ## Artifact identity
 
+At publication update on 2026-11-23, the latest published version within the supported 1.x line is **1.3.0**.
+It was published on 2026-11-23 from `f72addfaff7da1813e2b1005bf706713512e375b`; see the
+[publication record](docs/releases/1.3.0-publication.md).
+
 At qualification, version **1.2.0** was the latest **published** version within the supported 1.x line.
 At qualification, version **1.3.0** was an **unpublished** release target; this qualification snapshot does not assert
-availability after qualification. The 1.2.0 tagged artifact and its publication evidence remain immutable. Publication does not change the security
-reporting route or create a different support policy.
+availability after qualification. The 1.2.0 tagged artifact and its publication evidence remain immutable.
+Publication does not change the security reporting route or create a different support policy.
 
 ## Supported Versions
 
-At qualification, the active security-supported major line was 1.x.
+At qualification, the active security-supported major line was 1.x; the supported line remains 1.x.
 
 | Version | Supported          |
 | ------- | ------------------ |
