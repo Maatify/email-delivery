@@ -3,8 +3,9 @@
   "target": "1.3.0",
   "lifecycle": "stable-target",
   "publication_state_at_preparation": "unpublished",
-  "published_baseline_observed": "1.2.0",
+  "publication_state_at_qualification": "unpublished",
+  "published_baseline_at_qualification": "1.2.0",
   "supported_major_line": "1.x",
   "presentation_standard_ref": "698b0735c58ee388d650542336989b90e06d7003",
-  "publication_state_current": "unpublished"
+  "publication_state_in_this_snapshot": "unpublished"
 }

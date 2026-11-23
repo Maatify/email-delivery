@@ -124,6 +124,6 @@ recreating the job. Missing is never inferred sent or unaccepted.
 
 The guarantee is one accepted/enqueued job for an explicit request identity under this retention
 contract. It does not guarantee exactly-once SMTP. The worker's [processing lease](../book/worker.md#processing-lease)
-retries interrupted `processing` jobs at-least-once in the prepared 1.3.0 candidate; published 1.2.0
+retries interrupted `processing` jobs at-least-once in 1.3.0; published 1.2.0
 does not include that recovery behavior. HTTP
 idempotency, caller durable intent and external status receipts require adoption outside this package.

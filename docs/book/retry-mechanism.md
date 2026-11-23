@@ -2,7 +2,7 @@
 
 [Book](README.md) · [Worker clocks](worker.md#clock-domains)
 
-The processing-lease recovery described below is prepared for 1.3.0; published 1.2.0 does not reclaim
+The processing-lease recovery described below was introduced in 1.3.0; 1.2.0 does not reclaim
 interrupted `processing` jobs automatically.
 
 The worker increments `attempts` while claiming a pending batch. After a handled row failure it records

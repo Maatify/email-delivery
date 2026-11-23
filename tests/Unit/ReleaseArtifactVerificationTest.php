@@ -71,6 +71,7 @@ final class ReleaseArtifactVerificationTest extends TestCase
         yield 'false release link' => ['CHANGELOG.md', '## [1.3.0]', "## [1.3.0]\n\nhttps://github.com/Maatify/email-delivery/releases/tag/v1.3.0"];
         yield 'security identity' => ['SECURITY.md', '**1.3.0**', '**1.2.0**'];
         yield 'target metadata' => ['release-target.json', '"target": "1.3.0"', '"target": "1.2.0"'];
+        yield 'qualification state metadata' => ['release-target.json', '"publication_state_at_qualification": "unpublished"', '"publication_state_at_qualification": "published"'];
     }
 
     #[DataProvider('staleIdentity')]
@@ -80,6 +81,37 @@ final class ReleaseArtifactVerificationTest extends TestCase
         self::assertIsString($content);
         self::assertStringContainsString($before, $content, 'Mutation must hit the actual candidate content.');
         file_put_contents($this->directory . '/' . $path, str_replace($before, $after, $content));
+        $this->expectException(RuntimeException::class);
+        verifyIdentity($this->directory, '1.3.0');
+    }
+
+    /** @return iterable<string, array{string, string, string}> */
+    public static function unqualifiedPublicationClaims(): iterable
+    {
+        yield 'README latest release' => ['README.md', 'latest externally published version **at qualification**', 'latest externally published version currently'];
+        yield 'security latest release' => ['SECURITY.md', 'At qualification, version **1.2.0** was the latest **published**', 'Version **1.2.0** is the latest **published**'];
+        yield 'release notes status' => ['docs/releases/1.3.0-notes.md', 'at qualification, target 1.3.0 was **unpublished**', 'target 1.3.0 is **unpublished**'];
+        yield 'prepared source claim' => ['examples/README.md', 'target 1.3.0. Worker reconnect', 'follow the prepared 1.3.0 source. Worker reconnect'];
+        yield 'example source publication claim' => ['examples/worker-runner.php', 'This example follows 1.3.0;', 'This example follows the unpublished 1.3.0 candidate;'];
+        yield 'SVG candidate label' => ['docs/assets/architecture-diagram.svg', '1.3.0 reclaims expired processing leases.', '1.3.0 candidate reclaims expired leases.'];
+    }
+
+    #[DataProvider('unqualifiedPublicationClaims')]
+    public function testUnqualifiedMutablePublicationClaimsCannotQualify(string $path, string $before, string $after): void
+    {
+        $file = $this->directory . '/' . $path;
+        $content = (string) file_get_contents($file);
+        self::assertStringContainsString($before, $content, 'Mutation must hit the actual qualification snapshot.');
+        file_put_contents($file, str_replace($before, $after, $content));
+        $this->expectException(RuntimeException::class);
+        verifyIdentity($this->directory, '1.3.0');
+    }
+
+    public function testHistoricalAndCurrentPublicationClaimsInOneSentenceCannotShareQualifier(): void
+    {
+        $file = $this->directory . '/README.md';
+        $content = (string) file_get_contents($file);
+        file_put_contents($file, $content . "\nAt qualification, 1.2.0 was latest published, and the current publication state is published.\n");
         $this->expectException(RuntimeException::class);
         verifyIdentity($this->directory, '1.3.0');
     }
@@ -189,18 +221,16 @@ final class ReleaseArtifactVerificationTest extends TestCase
     /** @return iterable<string, array{string, string, string}> */
     public static function invalidPublishedIdentity(): iterable
     {
-        yield 'unknown state' => ['release-target.json', '"publication_state_current": "published"', '"publication_state_current": "unknown"'];
+        yield 'unknown state' => ['release-target.json', '"publication_state_in_this_snapshot": "published"', '"publication_state_in_this_snapshot": "unknown"'];
         yield 'invalid actual date' => ['release-target.json', '2026-11-23T20:09:38Z', '2026-02-31T20:09:38Z'];
         yield 'stale live date' => ['CHANGELOG.md', '## [1.3.0] - 2026-11-23', '## [1.3.0] - 2026-11-22'];
         yield 'missing release link' => ['CHANGELOG.md', '[1.3.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.3.0', '[1.3.0]: https://example.invalid'];
         yield 'stale published compare base' => ['CHANGELOG.md', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.3.0...HEAD', '[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.2.0...HEAD'];
-        yield 'stale latest published README baseline' => ['README.md', 'The latest published version is [1.3.0]', 'The latest published version remains [1.2.0]'];
-        yield 'stale README publication date' => ['README.md', 'published on 2026-11-23 UTC', 'published on 2026-11-06 UTC'];
-        yield 'stale Packagist installation boundary' => ['README.md', 'Run that exact command to install 1.3.0 from Packagist.', 'Run that exact install command only after 1.3.0 is published. Until then, install 1.2.0.'];
-        yield 'stale candidate label' => ['README.md', 'New in 1.3.0:', 'New in the unpublished 1.3.0 candidate:'];
-        yield 'stale latest published security baseline' => ['SECURITY.md', 'Version **1.3.0** is the latest **published** version within the supported 1.x line.', 'Version **1.2.0** is the latest **published** version within the supported 1.x line.'];
+        yield 'stale latest published README baseline' => ['README.md', '1.3.0 became the latest published release', '1.2.0 became the latest published release'];
+        yield 'stale README publication date' => ['README.md', 'published 2026-11-23 UTC).', 'published 2026-11-06 UTC).'];
+        yield 'stale latest published security baseline' => ['SECURITY.md', 'latest published version within the supported 1.x line is **1.3.0**.', 'latest published version within the supported 1.x line is **1.2.0**.'];
         yield 'missing publication evidence' => ['release-target.json', 'publication-verification.json', 'missing-evidence.json'];
-        yield 'stale live README' => ['README.md', 'Publication state: **published**', 'Publication state: pending'];
+        yield 'missing live README publication update' => ['README.md', '1.3.0 became the latest published release', '1.2.0 became the latest published release'];
     }
 
     #[DataProvider('invalidPublishedIdentity')]
@@ -225,7 +255,7 @@ final class ReleaseArtifactVerificationTest extends TestCase
         $targetPath = $this->directory . '/release-target.json';
         $target = json_decode((string) file_get_contents($targetPath), true, 512, JSON_THROW_ON_ERROR);
         self::assertIsArray($target);
-        $target['publication_state_current'] = 'published';
+        $target['publication_state_in_this_snapshot'] = 'published';
         $target['published_at'] = '2026-11-23T20:09:38Z';
         $target['qualified_sha'] = str_repeat('a', 40);
         $target['publication_evidence_url'] = 'https://github.com/Maatify/email-delivery/releases/download/v1.3.0/publication-verification.json';
@@ -233,26 +263,7 @@ final class ReleaseArtifactVerificationTest extends TestCase
 
         $readmePath = $this->directory . '/README.md';
         $readme = (string) file_get_contents($readmePath);
-        $readme = $this->replaceFixtureText($readme, 'Publication state: **unpublished**', 'Publication state: **published**');
-        $readme = $this->replaceFixtureText($readme,
-            'The latest published version remains [1.2.0](https://github.com/Maatify/email-delivery/releases/tag/v1.2.0),',
-            'The latest published version is [1.3.0](https://github.com/Maatify/email-delivery/releases/tag/v1.3.0),');
-        $readme = $this->replaceFixtureText($readme, 'published on 2026-11-06 UTC', 'published on 2026-11-23 UTC');
-        $readme = $this->replaceFixtureText($readme,
-            "This branch prepares\n1.3.0; it does not make that version available from Packagist or change the immutable 1.2.0 artifact.",
-            'This repository records the 1.3.0 publication; it does not change the immutable 1.3.0 artifact.');
-        $readme = $this->replaceFixtureText($readme,
-            'In the prepared, unpublished 1.3.0 candidate, a job', 'In 1.3.0, a job');
-        $readme = $this->replaceFixtureText($readme,
-            "Run that exact install command **only after 1.3.0 is published**. Until then, install the latest published\nversion with `composer require maatify/email-delivery:1.2.0`.",
-            'Run that exact command to install 1.3.0 from Packagist.');
-        $readme = $this->replaceFixtureText($readme, 'The 1.3.0 candidate requires', 'The 1.3.0 release requires');
-        $readme = $this->replaceFixtureText($readme,
-            'these candidate dependency changes are not part of 1.2.0.', 'these dependency differences are not part of 1.2.0.');
-        $readme = $this->replaceFixtureText($readme, "The 1.3.0 candidate's worker claim index", "The 1.3.0 release's worker claim index");
-        $readme = $this->replaceFixtureText($readme, '(also part of the candidate)', '(also part of 1.3.0)');
-        $readme = $this->replaceFixtureText($readme, 'New in the unpublished 1.3.0 candidate:', 'New in 1.3.0:');
-        $readme = $this->replaceFixtureText($readme, 'The unpublished 1.3.0 candidate adds', '1.3.0 adds');
+        $readme .= "\nAt publication update on 2026-11-23, 1.3.0 became the latest published release (published 2026-11-23 UTC).\n";
         file_put_contents($readmePath, $readme);
 
         $changelogPath = $this->directory . '/CHANGELOG.md';
@@ -264,15 +275,8 @@ final class ReleaseArtifactVerificationTest extends TestCase
 
         $securityPath = $this->directory . '/SECURITY.md';
         $security = (string) file_get_contents($securityPath);
-        $security = $this->replaceFixtureText($security,
-            "Version **1.2.0** is the latest **published** version within the supported 1.x line. Version **1.3.0**\nis being prepared and is **unpublished**; do not treat this branch as an available release. The 1.2.0\ntagged artifact and its publication evidence remain immutable.",
-            'Version **1.3.0** is the latest **published** version within the supported 1.x line. Its tagged artifact and publication evidence remain immutable.');
+        $security .= "\nAt publication update on 2026-11-23, the latest published version within the supported 1.x line is **1.3.0**.\n";
         file_put_contents($securityPath, $security);
     }
 
-    private function replaceFixtureText(string $content, string $before, string $after): string
-    {
-        self::assertStringContainsString($before, $content, 'Published fixture transition must hit the current live wording.');
-        return str_replace($before, $after, $content);
-    }
 }
