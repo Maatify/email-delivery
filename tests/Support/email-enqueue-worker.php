@@ -19,7 +19,11 @@ if ($connection === false) {
 }
 // The parent reads the content of .connection and .result: they are written atomically (see ChildProcessFile).
 // .before and .inserted are presence-only markers: the parent waits for them to exist and never reads them.
-ChildProcessFile::write($base . '.connection', (string) $connection->fetchColumn(), $spec['write_delay_ms']);
+// Test-only: a pause inside each atomic write, after the temporary file is created and before its content.
+$pause = $spec['write_delay_ms'] > 0 ? static function () use ($spec): void {
+    usleep($spec['write_delay_ms'] * 1000);
+} : null;
+ChildProcessFile::write($base . '.connection', (string) $connection->fetchColumn(), $pause);
 $pdo->beforeExecuteHook = static function (string $sql) use ($base): void {
     if (str_starts_with($sql, 'INSERT INTO cd_email_enqueue_receipts')) {
         file_put_contents($base . '.before', '1');
@@ -51,4 +55,4 @@ try {
         }
     }
 }
-ChildProcessFile::write($base . '.result', json_encode($result, JSON_THROW_ON_ERROR), $spec['write_delay_ms']);
+ChildProcessFile::write($base . '.result', json_encode($result, JSON_THROW_ON_ERROR), $pause);

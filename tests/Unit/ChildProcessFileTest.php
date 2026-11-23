@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -12,7 +13,28 @@ use PHPUnit\Framework\TestCase;
  */
 final class ChildProcessFileTest extends TestCase
 {
+    /**
+     * The child: writes 72 KiB through ChildProcessFile with a barrier inside the write. After the temporary file is
+     * created and before its content is written, it creates `waiting` and blocks until the parent creates `go`.
+     * Arguments: autoloader, final path, waiting marker, go marker.
+     */
+    private const CHILD = <<<'PHP'
+        require $argv[1];
+        Tests\Support\ChildProcessFile::write($argv[2], str_repeat('complete ', 8192), static function () use ($argv): void {
+            touch($argv[3]);
+            $deadline = microtime(true) + 30;
+            while (!is_file($argv[4])) {
+                if (microtime(true) >= $deadline) {
+                    throw new RuntimeException('The parent never released the child.');
+                }
+                usleep(1000);
+            }
+        });
+        PHP;
+
     private string $dir = '';
+    /** @var resource|null */
+    private $child = null;
 
     protected function setUp(): void
     {
@@ -23,57 +45,86 @@ final class ChildProcessFileTest extends TestCase
 
     protected function tearDown(): void
     {
+        if (is_resource($this->child)) {
+            touch($this->dir . '/go');
+            if (proc_get_status($this->child)['running']) {
+                proc_terminate($this->child);
+            }
+            proc_close($this->child);
+        }
         foreach (glob($this->dir . '/*') ?: [] as $file) {
             unlink($file);
         }
         rmdir($this->dir);
     }
 
+    /** @return iterable<string, array{int}> */
+    public static function parentDelays(): iterable
+    {
+        yield 'parent polls at once' => [0];
+        yield 'parent descheduled 90 ms as the write opens' => [90];
+        yield 'parent descheduled 140 ms as the write opens' => [140];
+        yield 'parent descheduled 320 ms as the write opens' => [320];
+    }
+
     /**
-     * A real child process pauses 300 ms between creating the file and writing its content. The parent polls every
-     * millisecond meanwhile, as the concurrency tests do: it may see no file, but never an empty or partial one.
-     * Seeing the temporary file for most of the pause proves the parent was polling while the write was open.
+     * The child holds its write open, between creating the temporary file and writing the content, until the parent
+     * releases it. Nothing here depends on timing: however late the parent looks (data sets: it loses the CPU right
+     * as the write opens), the final name does not exist while the write is open, and holds the whole content once
+     * it exists.
      */
-    public function testAParentPollingForAChildFileNeverReadsItBeforeItsContentIsComplete(): void
+    #[DataProvider('parentDelays')]
+    public function testAParentNeverSeesAChildFileBeforeItsContentIsComplete(int $parentDelayMs): void
     {
         $path = $this->dir . '/result';
-        $expected = str_repeat('complete ', 8192);
-        $child = proc_open([
-            PHP_BINARY, '-r',
-            'require $argv[1]; Tests\Support\ChildProcessFile::write($argv[2], str_repeat("complete ", 8192), 300);',
-            '--', dirname(__DIR__, 2) . '/vendor/autoload.php', $path,
-        ], [0 => ['file', '/dev/null', 'r'], 1 => ['file', $this->dir . '/stdout', 'w'], 2 => ['file', $this->dir . '/stderr', 'w']], $pipes);
+        $waiting = $this->dir . '/waiting';
+        $go = $this->dir . '/go';
+        $child = proc_open(
+            [PHP_BINARY, '-r', self::CHILD, '--', dirname(__DIR__, 2) . '/vendor/autoload.php', $path, $waiting, $go],
+            [0 => ['file', '/dev/null', 'r'], 1 => ['file', $this->dir . '/stdout', 'w'], 2 => ['file', $this->dir . '/stderr', 'w']],
+            $pipes,
+        );
         self::assertIsResource($child);
+        $this->child = $child;
+        if ($parentDelayMs > 0) {
+            // A parent scheduled late: it loses the CPU right as the child opens its write (the temporary file appears).
+            $deadline = microtime(true) + 30;
+            while ((glob($path . '.*.tmp') ?: []) === [] && !is_file($path) && microtime(true) < $deadline) {
+                usleep(200);
+            }
+            usleep($parentDelayMs * 1000);
+        }
 
-        $reads = [];
-        $temporarySeenAt = null;
-        $finalSeenAt = null;
-        $deadline = microtime(true) + 10;
-        do {
-            // Before PHP 8.3 only the first status call after the exit reports the exit code; proc_close() then
-            // returns -1. So the exit code is taken from that status.
-            $status = proc_get_status($child);
-            clearstatcache();
-            if ($temporarySeenAt === null && (glob($path . '.*.tmp') ?: []) !== []) {
-                $temporarySeenAt = microtime(true);
-            }
-            if (is_file($path)) {
-                $finalSeenAt ??= microtime(true);
-                $reads[] = (string) file_get_contents($path);
-            }
+        // The child is inside the write: the temporary file exists and its content is not written yet.
+        // Before PHP 8.3 only the first status call after an exit reports the exit code, so every status is kept.
+        $status = proc_get_status($child);
+        $deadline = microtime(true) + 30;
+        while (!is_file($waiting) && $status['running'] && microtime(true) < $deadline) {
             usleep(1_000);
-        } while ($status['running'] && microtime(true) < $deadline);
-        proc_close($child);
+            $status = proc_get_status($child);
+        }
+        clearstatcache();
+        self::assertFileExists($waiting, 'The child reached the barrier inside the write. Child stderr: ' . file_get_contents($this->dir . '/stderr'));
+        self::assertFileDoesNotExist($path, 'The final name does not exist while the write is open.');
+        $temporaries = glob($path . '.*.tmp') ?: [];
+        self::assertCount(1, $temporaries, 'The temporary file exists while the write is open.');
+        self::assertSame(0, filesize($temporaries[0]), 'Its content is not written yet.');
 
-        self::assertFalse($status['running'], 'The child finished in time.');
+        // Released, the child writes the content and renames the file into place.
+        touch($go);
+        $deadline = microtime(true) + 30;
+        while ($status['running'] && microtime(true) < $deadline) {
+            usleep(1_000);
+            $status = proc_get_status($child);
+        }
+        proc_close($child);
+        $this->child = null;
+
+        self::assertFalse($status['running'], 'The child finished after the release.');
         self::assertSame(0, $status['exitcode'], 'Child stderr: ' . file_get_contents($this->dir . '/stderr'));
         self::assertSame('', file_get_contents($this->dir . '/stderr'));
-        self::assertNotNull($finalSeenAt, 'The parent saw the finished file.');
-        self::assertSame([strlen($expected)], array_values(array_unique(array_map('strlen', $reads))), 'Every read of the file returned its whole content.');
-        self::assertSame($expected, $reads[array_key_last($reads)]);
-        self::assertNotNull($temporarySeenAt, 'The parent polled while the child was writing: the temporary file existed.');
-        self::assertGreaterThanOrEqual(0.25, $finalSeenAt - $temporarySeenAt, 'The final name appeared only after the pause.');
-        self::assertSame(['result', 'stderr', 'stdout'], array_values(array_diff(scandir($this->dir) ?: [], ['.', '..'])), 'No temporary file is left behind.');
+        self::assertSame(str_repeat('complete ', 8192), file_get_contents($path), 'The final name holds the whole content.');
+        self::assertSame(['go', 'result', 'stderr', 'stdout', 'waiting'], array_values(array_diff(scandir($this->dir) ?: [], ['.', '..'])), 'No temporary file is left behind.');
     }
 
     /**

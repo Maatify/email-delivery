@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Support;
 
+use Closure;
 use RuntimeException;
 
 /**
@@ -15,10 +16,11 @@ use RuntimeException;
 final class ChildProcessFile
 {
     /**
-     * @param int $delayMilliseconds test-only pause between creating the temporary file and writing its content.
-     *                               It widens the window in which a non-atomic write would expose an empty file.
+     * @param (Closure(): void)|null $beforeContent test-only: runs after the temporary file is created and before
+     *                                              its content is written, the window a non-atomic write would expose.
+     *                                              A test holds the window open with it (a barrier or a pause).
      */
-    public static function write(string $path, string $content, int $delayMilliseconds = 0): void
+    public static function write(string $path, string $content, ?Closure $beforeContent = null): void
     {
         $temporary = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
         $handle = fopen($temporary, 'xb');
@@ -26,8 +28,8 @@ final class ChildProcessFile
             throw new RuntimeException('The temporary child file was not created.');
         }
         try {
-            if ($delayMilliseconds > 0) {
-                usleep($delayMilliseconds * 1000);
+            if ($beforeContent !== null) {
+                $beforeContent();
             }
             if (fwrite($handle, $content) !== strlen($content)) {
                 throw new RuntimeException('The child file was not written completely.');
