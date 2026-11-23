@@ -81,13 +81,38 @@ function verifyMarkdownFences(string $markdown, string $path = 'Markdown'): void
     $openQuoteDepth = 0;
     $openListIndent = 0;
     $insideHtmlComment = false;
+    $listContexts = [];
     foreach (explode("\n", $markdown) as $line) {
         $line = rtrim($line, "\r");
         if ($openMarker === null) {
             $line = stripMarkdownHtmlComments($line, $insideHtmlComment);
-        }
-        if ($openMarker === null) {
-            [$line, $quoteDepth, $listIndent] = stripMarkdownContainerPrefixes($line);
+            [$line, $quoteDepth] = stripMarkdownQuotePrefixes($line);
+            $listIndent = 0;
+            if (preg_match('/^( {0,3})((?:[*+-]|\d{1,9}[.)]))([ \t]+)(.*)$/D', $line, $match) === 1) {
+                $markerIndent = strlen($match[1]);
+                while ($listContexts !== [] && end($listContexts)['marker_indent'] >= $markerIndent) {
+                    array_pop($listContexts);
+                }
+                while ($listContexts !== [] && $markerIndent < end($listContexts)['content_indent']) {
+                    array_pop($listContexts);
+                }
+                $listIndent = $markerIndent + strlen($match[2]) + strlen($match[3]);
+                $listContexts[] = [
+                    'marker_indent' => $markerIndent,
+                    'content_indent' => $listIndent,
+                    'quote_depth' => $quoteDepth,
+                ];
+                $line = $match[4];
+            } elseif ($listContexts !== []) {
+                $listContext = end($listContexts);
+                if (trim($line) !== '' && ($quoteDepth !== $listContext['quote_depth']
+                    || strspn($line, ' ') < $listContext['content_indent'])) {
+                    $listContexts = [];
+                } elseif (trim($line) !== '') {
+                    $listIndent = $listContext['content_indent'];
+                    $line = substr($line, $listIndent);
+                }
+            }
             if (preg_match('/^ {0,3}(`{3,}|~{3,})(.*)$/D', $line, $match) !== 1) {
                 continue;
             }
@@ -103,7 +128,7 @@ function verifyMarkdownFences(string $markdown, string $path = 'Markdown'): void
         }
         $quoteDepth = 0;
         if ($openQuoteDepth > 0) {
-            [$line, $quoteDepth] = stripMarkdownContainerPrefixes($line, false);
+            [$line, $quoteDepth] = stripMarkdownQuotePrefixes($line);
             if ($quoteDepth !== $openQuoteDepth) {
                 continue;
             }
@@ -122,25 +147,15 @@ function verifyMarkdownFences(string $markdown, string $path = 'Markdown'): void
     ensure($openMarker === null, 'Unclosed Markdown fenced code block in ' . $path . '.');
 }
 
-/** @return array{string, int, int} */
-function stripMarkdownContainerPrefixes(string $line, bool $stripLists = true): array
+/** @return array{string, int} */
+function stripMarkdownQuotePrefixes(string $line): array
 {
     $quoteDepth = 0;
-    $listIndent = 0;
-    while (true) {
-        if (preg_match('/^ {0,3}>[ \t]?/', $line, $match) === 1) {
-            $line = substr($line, strlen($match[0]));
-            ++$quoteDepth;
-            continue;
-        }
-        if ($stripLists && preg_match('/^ {0,3}(?:[*+-]|\d{1,9}[.)])[ \t]+/', $line, $match) === 1) {
-            $line = substr($line, strlen($match[0]));
-            $listIndent += strlen($match[0]);
-            continue;
-        }
-        break;
+    while (preg_match('/^ {0,3}>[ \t]?/', $line, $match) === 1) {
+        $line = substr($line, strlen($match[0]));
+        ++$quoteDepth;
     }
-    return [$line, $quoteDepth, $listIndent];
+    return [$line, $quoteDepth];
 }
 
 function stripMarkdownHtmlComments(string $line, bool &$insideComment): string

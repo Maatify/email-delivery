@@ -63,6 +63,28 @@ final class MarkdownFenceVerificationTest extends TestCase
         verifyMarkdownFences("1. ```php\n   code\n", 'list.md');
     }
 
+    public function testUnclosedFenceAfterBlankLineInListItemIsRejected(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Unclosed Markdown fenced code block in nested-list.md.');
+
+        verifyMarkdownFences("1. Example\n\n    ```php\n    echo 'hello';\n", 'nested-list.md');
+    }
+
+    public function testClosedFenceAfterBlankLineInListItemIsAccepted(): void
+    {
+        $this->expectNotToPerformAssertions();
+
+        verifyMarkdownFences("1. Example\n\n    ```php\n    echo 'hello';\n    ```\n", 'closed-nested-list.md');
+    }
+
+    public function testFourSpaceIndentedCodeOutsideAListIsNotTreatedAsFence(): void
+    {
+        $this->expectNotToPerformAssertions();
+
+        verifyMarkdownFences("    ```php\n    echo 'hello';\n", 'indented-code.md');
+    }
+
     public function testFenceMarkersInsideHtmlCommentsAreIgnored(): void
     {
         $this->expectNotToPerformAssertions();
