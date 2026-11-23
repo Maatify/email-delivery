@@ -73,30 +73,41 @@ function read(string $path): string
     return $value;
 }
 
-/** Reject live release-state claims in distributed Markdown unless their time boundary is explicit. */
+/** Reject live release-state claims in distributed consumer text unless their time boundary is explicit. */
 function verifyPublicationClaimsAreTemporal(string $root): void
 {
     $qualifier = '/\b(?:at|as of) qualification\b|\bat (?:the )?(?:preparation )snapshot\b|\bat the time of this maintainer preparation review\b|\bat publication update\b/i';
     $mutableClaim = '/\blatest\b.{0,120}\bpublished\b|\bpublished\b.{0,100}\blatest\b'
         . '|\b(?:unpublished|not published|being prepared|not yet available|not yet published)\b'
         . '|\bpublication state\b|\bonly after\b.{0,80}\bpublished\b|\buntil then\b'
-        . '|\bcandidate-only\b|\bprepared (?:1\.3\.0|source|candidate)\b/i';
+        . '|\bcandidate-only\b|\bprepared (?:1\.3\.0|source|candidate)\b|\b1\.3\.0\s+candidate\b'
+        . '|\b(?:current|currently)\b.{0,40}\bpublished\b/i';
 
     foreach (requiredFiles($root) as $path) {
         $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-        if (!in_array($extension, ['md', 'txt'], true) && !($extension === 'php' && str_starts_with($path, 'examples/'))) {
+        if (!in_array($extension, ['md', 'txt'], true)
+            && !($extension === 'php' && str_starts_with($path, 'examples/'))
+            && !($extension === 'svg' && str_starts_with($path, 'docs/assets/'))) {
             continue;
         }
-        $content = preg_replace('/\s+/u', ' ', read($root . '/' . $path));
+        $content = read($root . '/' . $path);
+        if ($extension === 'svg') {
+            $content = html_entity_decode(strip_tags($content), ENT_QUOTES | ENT_XML1, 'UTF-8');
+        }
+        $content = preg_replace('/\s+/u', ' ', $content);
         ensure(is_string($content), 'Cannot normalize publication facts in ' . $path . '.');
         $sentences = preg_split('/(?<=[.!?])\s+/', $content);
         ensure(is_array($sentences), 'Cannot inspect publication facts in ' . $path . '.');
         foreach ($sentences as $sentence) {
-            if (preg_match($mutableClaim, $sentence) !== 1) {
-                continue;
+            $clauses = preg_split('/;|\s+\b(?:and|but|however|whereas|while)\b\s+/i', $sentence);
+            ensure(is_array($clauses), 'Cannot split publication claims in ' . $path . '.');
+            foreach ($clauses as $clause) {
+                if (preg_match($mutableClaim, $clause) !== 1) {
+                    continue;
+                }
+                ensure(preg_match($qualifier, $clause) === 1,
+                    'Publication-state claim must be qualified in its clause in ' . $path . ': ' . substr($clause, 0, 160));
             }
-            ensure(preg_match($qualifier, $sentence) === 1,
-                'Publication-state claim must be qualified as of a snapshot in ' . $path . ': ' . substr($sentence, 0, 160));
         }
     }
 }
@@ -238,7 +249,7 @@ function verifyIdentity(string $root, string $version): void
         ensure(str_contains($readme, 'At qualification, install') && str_contains($readme, 'when 1.3.0 is available from Packagist'), 'Missing qualification installation boundary.');
         ensure(str_contains($securityFacts, 'At qualification, version **' . $baseline . '** was the latest **published** version within the supported 1.x line.'),
             'Security policy latest published version differs from the observed baseline.');
-        ensure(str_contains($securityFacts, 'At qualification, version **' . $version . '** was the release target and **unpublished**'),
+        ensure(str_contains($securityFacts, 'At qualification, version **' . $version . '** was an **unpublished** release target'),
             'Security policy must identify the target as unpublished.');
     } else {
         $publishedIntro = 'At publication update on ' . $publishedDate . ', ' . $version

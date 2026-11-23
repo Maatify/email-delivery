@@ -2,7 +2,7 @@
 
 [Documentation](README.md) · [Package Reference](reference/PACKAGE_REFERENCE.md) · [Target changelog](../CHANGELOG.md#130)
 
-At qualification, version 1.3.0 is the Stable 1.x release target and is **not published**.
+At qualification, version 1.3.0 is the Stable 1.x target and has **not yet been published**.
 Version 1.2.0 was the latest published release at qualification; its immutable artifact and [publication record](releases/1.2.0-publication.md) are
 historical evidence, not a qualification for 1.3.0. This guide records preparation and qualification
 requirements. It does not authorize a tag, GitHub Release, Packagist publication, or production migration.

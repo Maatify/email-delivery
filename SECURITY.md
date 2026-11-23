@@ -6,7 +6,7 @@
 ## Artifact identity
 
 At qualification, version **1.2.0** was the latest **published** version within the supported 1.x line.
-At qualification, version **1.3.0** was the release target and **unpublished**; this qualification snapshot does not assert
+At qualification, version **1.3.0** was an **unpublished** release target; this qualification snapshot does not assert
 availability after qualification. The 1.2.0 tagged artifact and its publication evidence remain immutable. Publication does not change the security
 reporting route or create a different support policy.
 

@@ -93,6 +93,7 @@ final class ReleaseArtifactVerificationTest extends TestCase
         yield 'release notes status' => ['docs/releases/1.3.0-notes.md', 'at qualification, target 1.3.0 was **unpublished**', 'target 1.3.0 is **unpublished**'];
         yield 'prepared source claim' => ['examples/README.md', 'target 1.3.0. Worker reconnect', 'follow the prepared 1.3.0 source. Worker reconnect'];
         yield 'example source publication claim' => ['examples/worker-runner.php', 'This example follows 1.3.0;', 'This example follows the unpublished 1.3.0 candidate;'];
+        yield 'SVG candidate label' => ['docs/assets/architecture-diagram.svg', '1.3.0 reclaims expired processing leases.', '1.3.0 candidate reclaims expired leases.'];
     }
 
     #[DataProvider('unqualifiedPublicationClaims')]
@@ -102,6 +103,15 @@ final class ReleaseArtifactVerificationTest extends TestCase
         $content = (string) file_get_contents($file);
         self::assertStringContainsString($before, $content, 'Mutation must hit the actual qualification snapshot.');
         file_put_contents($file, str_replace($before, $after, $content));
+        $this->expectException(RuntimeException::class);
+        verifyIdentity($this->directory, '1.3.0');
+    }
+
+    public function testHistoricalAndCurrentPublicationClaimsInOneSentenceCannotShareQualifier(): void
+    {
+        $file = $this->directory . '/README.md';
+        $content = (string) file_get_contents($file);
+        file_put_contents($file, $content . "\nAt qualification, 1.2.0 was latest published, and the current publication state is published.\n");
         $this->expectException(RuntimeException::class);
         verifyIdentity($this->directory, '1.3.0');
     }
