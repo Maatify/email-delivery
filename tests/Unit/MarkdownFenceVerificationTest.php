@@ -28,7 +28,7 @@ final class MarkdownFenceVerificationTest extends TestCase
     {
         $this->expectNotToPerformAssertions();
 
-        verifyMarkdownFences("````php\n<?php\n```\n````\n\n~~~yaml\nkey: value\n~~~~\n", 'balanced.md');
+        verifyMarkdownFences("````php\n<?php\n```\n````\n\n~~~yaml\nkey: value\n~~~~\n> ```php\n> code\n> ```\n1. ~~~text\n   code\n   ~~~\n", 'balanced.md');
     }
 
     public function testUnclosedFenceIsRejected(): void
@@ -45,5 +45,36 @@ final class MarkdownFenceVerificationTest extends TestCase
         $this->expectExceptionMessage('Unclosed Markdown fenced code block in mismatched.md.');
 
         verifyMarkdownFences("~~~\n```\n", 'mismatched.md');
+    }
+
+    public function testUnclosedFenceInsideBlockquoteIsRejected(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Unclosed Markdown fenced code block in blockquote.md.');
+
+        verifyMarkdownFences("> ```php\n> code\n", 'blockquote.md');
+    }
+
+    public function testUnclosedFenceInsideOrderedListIsRejected(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Unclosed Markdown fenced code block in list.md.');
+
+        verifyMarkdownFences("1. ```php\n   code\n", 'list.md');
+    }
+
+    public function testFenceMarkersInsideHtmlCommentsAreIgnored(): void
+    {
+        $this->expectNotToPerformAssertions();
+
+        verifyMarkdownFences("<!-- ``` -->\nText\n<!-- comment starts\n```\nstill a comment -->\nMore text\n", 'comment.md');
+    }
+
+    public function testListMarkerInsideFenceContentDoesNotCloseTheFence(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Unclosed Markdown fenced code block in code-content.md.');
+
+        verifyMarkdownFences("```text\n- ```\n", 'code-content.md');
     }
 }

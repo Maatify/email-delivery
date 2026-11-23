@@ -78,26 +78,94 @@ function verifyMarkdownFences(string $markdown, string $path = 'Markdown'): void
 {
     $openMarker = null;
     $openLength = 0;
-    foreach (explode("\n", $markdown) as $lineNumber => $line) {
+    $openQuoteDepth = 0;
+    $openListIndent = 0;
+    $insideHtmlComment = false;
+    foreach (explode("\n", $markdown) as $line) {
         $line = rtrim($line, "\r");
         if ($openMarker === null) {
+            $line = stripMarkdownHtmlComments($line, $insideHtmlComment);
+        }
+        if ($openMarker === null) {
+            [$line, $quoteDepth, $listIndent] = stripMarkdownContainerPrefixes($line);
             if (preg_match('/^ {0,3}(`{3,}|~{3,})(.*)$/D', $line, $match) !== 1) {
                 continue;
             }
             $marker = $match[1][0];
-            ensure($marker !== '`' || !str_contains($match[2], '`'),
-                'Invalid backtick in Markdown fence info string in ' . $path . ':' . ($lineNumber + 1));
+            if ($marker === '`' && str_contains($match[2], '`')) {
+                continue;
+            }
             $openMarker = $marker;
             $openLength = strlen($match[1]);
+            $openQuoteDepth = $quoteDepth;
+            $openListIndent = $listIndent;
             continue;
+        }
+        $quoteDepth = 0;
+        if ($openQuoteDepth > 0) {
+            [$line, $quoteDepth] = stripMarkdownContainerPrefixes($line, false);
+            if ($quoteDepth !== $openQuoteDepth) {
+                continue;
+            }
+        }
+        if ($openListIndent > 0 && preg_match('/^ {' . $openListIndent . '}/', $line) === 1) {
+            $line = substr($line, $openListIndent);
         }
         $pattern = '/^ {0,3}' . preg_quote($openMarker, '/') . '{' . $openLength . ',}[ \t]*$/D';
         if (preg_match($pattern, $line) === 1) {
             $openMarker = null;
             $openLength = 0;
+            $openQuoteDepth = 0;
+            $openListIndent = 0;
         }
     }
     ensure($openMarker === null, 'Unclosed Markdown fenced code block in ' . $path . '.');
+}
+
+/** @return array{string, int, int} */
+function stripMarkdownContainerPrefixes(string $line, bool $stripLists = true): array
+{
+    $quoteDepth = 0;
+    $listIndent = 0;
+    while (true) {
+        if (preg_match('/^ {0,3}>[ \t]?/', $line, $match) === 1) {
+            $line = substr($line, strlen($match[0]));
+            ++$quoteDepth;
+            continue;
+        }
+        if ($stripLists && preg_match('/^ {0,3}(?:[*+-]|\d{1,9}[.)])[ \t]+/', $line, $match) === 1) {
+            $line = substr($line, strlen($match[0]));
+            $listIndent += strlen($match[0]);
+            continue;
+        }
+        break;
+    }
+    return [$line, $quoteDepth, $listIndent];
+}
+
+function stripMarkdownHtmlComments(string $line, bool &$insideComment): string
+{
+    $visible = '';
+    $offset = 0;
+    while ($offset < strlen($line)) {
+        if ($insideComment) {
+            $end = strpos($line, '-->', $offset);
+            if ($end === false) {
+                return $visible;
+            }
+            $offset = $end + 3;
+            $insideComment = false;
+            continue;
+        }
+        $start = strpos($line, '<!--', $offset);
+        if ($start === false) {
+            return $visible . substr($line, $offset);
+        }
+        $visible .= substr($line, $offset, $start - $offset);
+        $offset = $start + 4;
+        $insideComment = true;
+    }
+    return $visible;
 }
 
 /** Reject live release-state claims in distributed consumer text unless their time boundary is explicit. */
