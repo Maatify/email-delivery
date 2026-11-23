@@ -49,8 +49,9 @@ published on 2026-11-06 UTC and verified as an exact Composer dist installation.
 
 Keyed enqueue atomically stores a job and its durable receipt. Repeating the same namespace/key and
 logical content returns the same receipt/job identity. It does **not** guarantee exactly-once SMTP or
-mailbox arrival. A job whose worker was interrupted after claiming it is claimed again once its
-processing lease expires, so it may be sent twice (at-least-once).
+mailbox arrival. In the prepared, unpublished 1.3.0 candidate, a job whose worker was interrupted after
+claiming it is claimed again once its processing lease expires, so it may be sent twice (at-least-once).
+Published 1.2.0 does not include that lease recovery behavior.
 
 ## Public Runtime API
 

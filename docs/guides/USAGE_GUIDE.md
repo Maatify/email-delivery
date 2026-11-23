@@ -59,6 +59,9 @@ and recover with the same key on a fresh connection. See [the detailed contract]
 
 ## Worker
 
+The lease and connection-recovery behavior in this section is prepared for 1.3.0 and is not in published
+1.2.0.
+
 Input: a connection factory (`workerConnectionFactory()`), crypto/context provider, renderer, transport,
 PSR logger and an optional processing lease (default 300 seconds).
 Public call: `createWorker()` constructs `EmailQueueWorker`; `runOneWorkerBatch()` calls `processBatch()`.

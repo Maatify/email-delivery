@@ -25,5 +25,6 @@ A nullable Reply-To belongs in `EmailQueuePayloadDTO`; the worker forwards it to
 not a caller authorization or a delivery guarantee.
 
 A successful enqueue means queue storage/acceptance. A separately [run worker](setup-worker.md)
-attempts delivery. Inspect scoped receipt state for keyed work, respecting `queue_missing` and the
-worker's at-least-once processing lease; do not present acceptance as mailbox delivery.
+attempts delivery. Inspect scoped receipt state for keyed work, respecting `queue_missing`; the
+at-least-once processing lease is prepared for 1.3.0 and is not in published 1.2.0. Do not present
+acceptance as mailbox delivery.
