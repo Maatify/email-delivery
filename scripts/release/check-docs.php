@@ -46,7 +46,9 @@ foreach ($paths as $path) {
         if (preg_match('/^[a-zA-Z][\w+.-]*:/', $link) === 1) {
             continue;
         }
-        [$destination, $anchor] = array_pad(explode('#', $link, 2), 2, null);
+        $parts = explode('#', $link, 2);
+        $destination = $parts[0];
+        $anchor = $parts[1] ?? null;
         $target = $destination === '' ? $path : realpath(dirname($path) . '/' . rawurldecode($destination));
         ensure(is_string($target) && file_exists($target), 'Broken local link: ' . $path . ' -> ' . $link);
         ensure(str_starts_with($target, $root . '/'), 'Consumer link escapes package: ' . $link);

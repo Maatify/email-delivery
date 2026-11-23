@@ -176,7 +176,8 @@ final class ReleaseArtifactVerificationTest extends TestCase
     public function testActualPublishedLiveIdentityIsValidWithoutRewritingTheTagSnapshot(): void
     {
         verifyIdentity(dirname(__DIR__, 2), '1.2.0');
-        self::assertTrue(true);
+        // verifyIdentity() throws on any mismatch; returning normally is the check.
+        $this->addToAssertionCount(1);
     }
 
     /** @return iterable<string, array{string, mixed}> */

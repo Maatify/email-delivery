@@ -11,7 +11,7 @@ namespace Tests\Integration;
  */
 final class EmailQueueWorkerReconnectEntityTypeMysqlTest extends EmailQueueWorkerReconnectMysqlTest
 {
-    protected function batchEntityType(): ?string
+    protected function batchEntityType(): string
     {
         return 'user';
     }

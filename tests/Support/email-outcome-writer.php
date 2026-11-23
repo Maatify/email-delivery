@@ -42,5 +42,6 @@ try {
     $pdo->commit();
     $report('result', 'ok');
 } catch (PDOException $failure) {
-    $report('result', (string) ($failure->errorInfo[1] ?? $failure->getMessage()));
+    $code = $failure->errorInfo[1] ?? null;
+    $report('result', is_int($code) || is_string($code) ? (string) $code : $failure->getMessage());
 }

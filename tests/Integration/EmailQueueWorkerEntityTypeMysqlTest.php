@@ -40,7 +40,7 @@ final class EmailQueueWorkerEntityTypeMysqlTest extends IsolatedEmailMysqlTestCa
         gc_collect_cycles();
         if (isset($this->pdo)) {
             $leftover = $this->pdo->query('SELECT ID FROM information_schema.PROCESSLIST WHERE DB = DATABASE() AND ID <> CONNECTION_ID()');
-            foreach (array_map('intval', $leftover === false ? [] : $leftover->fetchAll(PDO::FETCH_COLUMN)) as $thread) {
+            foreach (self::ints($leftover === false ? [] : $leftover->fetchAll(PDO::FETCH_COLUMN)) as $thread) {
                 try {
                     $this->pdo->exec('KILL CONNECTION ' . $thread);
                 } catch (PDOException) {
@@ -93,7 +93,7 @@ final class EmailQueueWorkerEntityTypeMysqlTest extends IsolatedEmailMysqlTestCa
                 try {
                     $other->exec("UPDATE cd_email_queue SET last_error = 'other worker' WHERE id = $id");
                 } catch (PDOException $failure) {
-                    $observed['waited'][] = $id . ': ' . ($failure->errorInfo[1] ?? '?');
+                    $observed['waited'][] = $id . ': ' . self::driverCode($failure);
                 } finally {
                     $other->rollBack();
                 }
@@ -174,7 +174,7 @@ final class EmailQueueWorkerEntityTypeMysqlTest extends IsolatedEmailMysqlTestCa
                 try {
                     $other->exec("UPDATE cd_email_queue SET last_error = 'its own worker' WHERE id = $id");
                 } catch (PDOException $failure) {
-                    $observed['waited'][] = "$type: " . ($failure->errorInfo[1] ?? '?');
+                    $observed['waited'][] = "$type: " . self::driverCode($failure);
                 } finally {
                     $other->rollBack();
                 }
@@ -359,7 +359,7 @@ final class EmailQueueWorkerEntityTypeMysqlTest extends IsolatedEmailMysqlTestCa
                 try {
                     $other->exec("UPDATE cd_email_queue SET last_error = 'probe' WHERE id = $id");
                 } catch (PDOException $failure) {
-                    $observed['waited'][] = "$what: " . ($failure->errorInfo[1] ?? '?');
+                    $observed['waited'][] = "$what: " . self::driverCode($failure);
                 } finally {
                     $other->rollBack();
                 }

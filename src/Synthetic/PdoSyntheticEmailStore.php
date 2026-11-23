@@ -108,6 +108,7 @@ final readonly class PdoSyntheticEmailStore implements SyntheticEmailRecorderInt
         }
     }
 
+    /** @phpstan-impure Each call deletes expired rows, so two calls can return different counts. */
     public function purgeExpired(int $limit = 100): int
     {
         if ($limit < 1 || $limit > 1000) {
