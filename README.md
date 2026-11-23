@@ -21,10 +21,13 @@ transport through PHPMailer. Applications enqueue work; a separately run worker 
 
 ---
 
-Latest stable release: [1.3.0](https://github.com/Maatify/email-delivery/releases/tag/v1.3.0), published 2026-11-23.
+At publication update on 2026-11-23, 1.3.0 became the latest published release (published 2026-11-23 UTC).
 Its release-qualified source is `f72addfaff7da1813e2b1005bf706713512e375b`; see the [publication record](docs/releases/1.3.0-publication.md)
-for CI, release-artifact and external Composer verification evidence. The immutable 1.3.0 artifact retains the qualification snapshot
-that recorded its pre-publication state.
+for CI, release-artifact and external Composer verification evidence.
+
+Release artifact target: **1.3.0**. Publication state **at qualification**: **unpublished**.
+The latest externally published version **at qualification** is [1.2.0](https://github.com/Maatify/email-delivery/releases/tag/v1.2.0),
+published on 2026-11-06 UTC and verified as an exact Composer dist installation. These facts preserve the historical qualification snapshot.
 
 ## Start here
 
@@ -73,8 +76,9 @@ DTO fields, enum values, exceptions and behavioral boundaries. Internal helpers 
 composer require maatify/email-delivery:1.3.0
 ```
 
-The exact 1.3.0 version is available from Packagist. The unpinned command
-`composer require maatify/email-delivery` resolves to the version Packagist offers at install time.
+The exact 1.3.0 version is available from Packagist. Historical qualification instructions: At qualification, install
+`composer require maatify/email-delivery:1.2.0`; use the exact 1.3.0 command above when 1.3.0 is available from Packagist.
+The unpinned command `composer require maatify/email-delivery` resolves to the version Packagist offers at install time.
 
 Version 1.3.0 requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer (6.9+ or 7), PSR-3 logging and
 `symfony/polyfill-mbstring` (`mb_strcut` without the mbstring extension). Published 1.2.0 requires PHPMailer `^6.9`

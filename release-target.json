@@ -7,5 +7,8 @@
   "published_baseline_at_qualification": "1.2.0",
   "supported_major_line": "1.x",
   "presentation_standard_ref": "698b0735c58ee388d650542336989b90e06d7003",
-  "publication_state_in_this_snapshot": "unpublished"
+  "publication_state_in_this_snapshot": "published",
+  "published_at": "2026-11-23T19:27:07Z",
+  "qualified_sha": "f72addfaff7da1813e2b1005bf706713512e375b",
+  "publication_evidence_url": "https://github.com/Maatify/email-delivery/releases/download/v1.3.0/publication-verification.json"
 }
