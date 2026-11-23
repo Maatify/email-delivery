@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Support;
 
 use PDO;
+use PDOException;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
@@ -57,6 +58,46 @@ abstract class IsolatedEmailMysqlTestCase extends TestCase
         $value = $statement->fetchColumn();
         if (!is_string($value) && !is_int($value)) {
             throw new RuntimeException('Fixture query returned an invalid scalar.');
+        }
+        return (string) $value;
+    }
+
+    /** The driver error code of a PDO failure as text, or '?' when the driver gave none. */
+    protected static function driverCode(PDOException $failure): string
+    {
+        $code = $failure->errorInfo[1] ?? null;
+        return is_int($code) || is_string($code) ? (string) $code : '?';
+    }
+
+    /**
+     * One fetched integer column: PDO returns an int, or a numeric string under emulated prepares.
+     *
+     * @param array<mixed> $values
+     * @return list<int>
+     */
+    protected static function ints(array $values): array
+    {
+        $ints = [];
+        foreach ($values as $value) {
+            if (is_string($value) && preg_match('/\A-?\d+\z/', $value) === 1) {
+                $value = (int) $value;
+            }
+            if (!is_int($value)) {
+                throw new RuntimeException('Fixture query returned a non-integer value.');
+            }
+            $ints[] = $value;
+        }
+        return $ints;
+    }
+
+    /** A fetched column value as text; NULL is ''. */
+    protected static function text(mixed $value): string
+    {
+        if ($value === null) {
+            return '';
+        }
+        if (!is_scalar($value)) {
+            throw new RuntimeException('Fixture query returned a non-scalar value.');
         }
         return (string) $value;
     }

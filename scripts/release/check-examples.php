@@ -44,7 +44,8 @@ $transport = new class () implements EmailTransportInterface {
 };
 \Maatify\EmailDelivery\Documentation\Examples\sendRenderedEmail($transport, 'fixture@example.invalid', $rendered);
 ensure($transport->calls === 1, 'Transport example forwarding failed.');
-\Maatify\EmailDelivery\Documentation\Examples\createSmtpTransport(new EmailTransportConfigDTO('fixture.invalid', 587, 'fixture', 'fixture', 'fixture@example.invalid', 'Fixture', 'tls'));
+// Constructing the SMTP transport must neither throw nor connect; it is never used to send here.
+$smtpTransport = \Maatify\EmailDelivery\Documentation\Examples\createSmtpTransport(new EmailTransportConfigDTO('fixture.invalid', 587, 'fixture', 'fixture', 'fixture@example.invalid', 'Fixture', 'tls'));
 // Old include paths remain safe and do not redeclare functions after canonical includes.
 foreach (glob($root . '/docs/examples/*.php') ?: [] as $path) {
     require_once $path;

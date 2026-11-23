@@ -17,6 +17,7 @@ use Maatify\Crypto\KeyRotation\Providers\InMemoryKeyProvider;
 use Maatify\Crypto\Reversible\Algorithms\Aes256GcmAlgorithm;
 use Maatify\Crypto\HKDF\HKDFService;
 use Maatify\Crypto\Reversible\Registry\ReversibleCryptoAlgorithmRegistry;
+use Maatify\EmailDelivery\DTO\RenderedEmailDTO;
 use Maatify\EmailDelivery\Queue\DTO\EmailQueuePayloadDTO;
 use Maatify\EmailDelivery\Queue\PdoEmailQueueWriter;
 use Maatify\EmailDelivery\Renderer\TwigEmailRenderer;
@@ -96,7 +97,7 @@ class EmailQueueWorkerIntegrationTest extends TestCase
 
         $this->transport->expects($this->once())
             ->method('send')
-            ->with('alice@example.com', $this->callback(function ($renderedEmail) {
+            ->with('alice@example.com', $this->callback(function (RenderedEmailDTO $renderedEmail): bool {
                 return $renderedEmail->subject === 'Welcome Alice' &&
                        str_contains($renderedEmail->htmlBody, 'Welcome to TestApp');
             }));
@@ -107,11 +108,9 @@ class EmailQueueWorkerIntegrationTest extends TestCase
 
         $this->worker->processBatch(10);
 
-        $stmt = $this->pdo->query("SELECT * FROM cd_email_queue WHERE status = 'sent'");
-        $this->assertInstanceOf(\PDOStatement::class, $stmt);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->rows("SELECT * FROM cd_email_queue WHERE status = 'sent'");
         $this->assertCount(1, $rows);
-        $this->assertSame(1, (int)$rows[0]['attempts']);
+        $this->assertSame(1, self::int($rows[0]['attempts']));
         $this->assertNotNull($rows[0]['sent_at']);
     }
 
@@ -133,13 +132,11 @@ class EmailQueueWorkerIntegrationTest extends TestCase
 
         $this->worker->processBatch(10);
 
-        $stmt = $this->pdo->query('SELECT * FROM cd_email_queue');
-        $this->assertInstanceOf(\PDOStatement::class, $stmt);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->rows('SELECT * FROM cd_email_queue');
 
         $this->assertCount(1, $rows);
         $this->assertSame('pending', $rows[0]['status']);
-        $this->assertSame(1, (int)$rows[0]['attempts']);
+        $this->assertSame(1, self::int($rows[0]['attempts']));
         $this->assertNotNull($rows[0]['retry_after']);
         $this->assertIsString($rows[0]['last_error']);
         $this->assertStringContainsString('smtp_transport_error', $rows[0]['last_error']);
@@ -154,18 +151,16 @@ class EmailQueueWorkerIntegrationTest extends TestCase
 
         $this->logger->expects($this->once())
             ->method('error')
-            ->with('Email job failed', $this->callback(function ($context) {
+            ->with('Email job failed', $this->callback(function (array $context): bool {
                 return $context['error_code'] === 'crypto_decryption_failed';
             }));
 
         $this->worker->processBatch(10);
 
-        $stmt = $this->pdo->query('SELECT * FROM cd_email_queue');
-        $this->assertInstanceOf(\PDOStatement::class, $stmt);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->rows('SELECT * FROM cd_email_queue');
 
         $this->assertSame('pending', $rows[0]['status']);
-        $this->assertSame(1, (int)$rows[0]['attempts']);
+        $this->assertSame(1, self::int($rows[0]['attempts']));
         $this->assertIsString($rows[0]['last_error']);
         $this->assertStringContainsString('crypto_decryption_failed', $rows[0]['last_error']);
     }
@@ -177,18 +172,16 @@ class EmailQueueWorkerIntegrationTest extends TestCase
 
         $this->logger->expects($this->once())
             ->method('error')
-            ->with('Email job failed', $this->callback(function ($context) {
+            ->with('Email job failed', $this->callback(function (array $context): bool {
                 return $context['error_code'] === 'email_render_failed';
             }));
 
         $this->worker->processBatch(10);
 
-        $stmt = $this->pdo->query('SELECT * FROM cd_email_queue');
-        $this->assertInstanceOf(\PDOStatement::class, $stmt);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->rows('SELECT * FROM cd_email_queue');
 
         $this->assertSame('pending', $rows[0]['status']);
-        $this->assertSame(1, (int)$rows[0]['attempts']);
+        $this->assertSame(1, self::int($rows[0]['attempts']));
         $this->assertIsString($rows[0]['last_error']);
         $this->assertStringContainsString('email_render_failed', $rows[0]['last_error']);
     }
@@ -217,12 +210,10 @@ class EmailQueueWorkerIntegrationTest extends TestCase
             $this->worker->processBatch(10);
         }
 
-        $stmt = $this->pdo->query('SELECT * FROM cd_email_queue');
-        $this->assertInstanceOf(\PDOStatement::class, $stmt);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->rows('SELECT * FROM cd_email_queue');
 
         $this->assertSame('failed', $rows[0]['status']);
-        $this->assertSame(4, (int)$rows[0]['attempts']);
+        $this->assertSame(4, self::int($rows[0]['attempts']));
     }
 
     public function testWorkerBatchProcessing(): void
@@ -239,8 +230,8 @@ class EmailQueueWorkerIntegrationTest extends TestCase
         $this->assertInstanceOf(\PDOStatement::class, $stmt);
         $counts = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
 
-        $this->assertSame(3, (int)$counts['sent']);
-        $this->assertSame(2, (int)$counts['pending']);
+        $this->assertSame(3, self::int($counts['sent']));
+        $this->assertSame(2, self::int($counts['pending']));
     }
 
     public function testPartialBatchSuccess(): void
@@ -268,8 +259,8 @@ class EmailQueueWorkerIntegrationTest extends TestCase
         $this->assertInstanceOf(\PDOStatement::class, $stmt);
         $counts = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
 
-        $this->assertSame(2, (int)$counts['sent']);
-        $this->assertSame(1, (int)$counts['pending']);
+        $this->assertSame(2, self::int($counts['sent']));
+        $this->assertSame(1, self::int($counts['pending']));
 
         $stmt = $this->pdo->query("SELECT last_error FROM cd_email_queue WHERE status = 'pending'");
         $this->assertInstanceOf(\PDOStatement::class, $stmt);
@@ -291,13 +282,11 @@ class EmailQueueWorkerIntegrationTest extends TestCase
 
         $this->worker->processBatch(10);
 
-        $stmt = $this->pdo->query('SELECT * FROM cd_email_queue');
-        $this->assertInstanceOf(\PDOStatement::class, $stmt);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->rows('SELECT * FROM cd_email_queue');
 
         $this->assertCount(1, $rows);
         $this->assertSame('pending', $rows[0]['status']);
-        $this->assertSame(0, (int)$rows[0]['attempts']);
+        $this->assertSame(0, self::int($rows[0]['attempts']));
     }
 
     public function testEmptyQueueScenario(): void
@@ -306,9 +295,7 @@ class EmailQueueWorkerIntegrationTest extends TestCase
 
         $this->worker->processBatch(10);
 
-        $stmt = $this->pdo->query('SELECT * FROM cd_email_queue');
-        $this->assertInstanceOf(\PDOStatement::class, $stmt);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->rows('SELECT * FROM cd_email_queue');
         $this->assertCount(0, $rows);
     }
 
@@ -331,7 +318,7 @@ class EmailQueueWorkerIntegrationTest extends TestCase
 
         $this->transport->expects($this->once())
             ->method('send')
-            ->with('secure@example.com', $this->callback(function ($renderedEmail) {
+            ->with('secure@example.com', $this->callback(function (RenderedEmailDTO $renderedEmail): bool {
                 return $renderedEmail->subject === 'Welcome TopSecret' &&
                        str_contains($renderedEmail->htmlBody, 'Hello TopSecret');
             }));
@@ -406,10 +393,30 @@ class EmailQueueWorkerIntegrationTest extends TestCase
 
         $this->worker->processBatch(10);
 
-        $stmt = $this->pdo->query("SELECT * FROM cd_email_queue WHERE status = 'sent'");
-        $this->assertInstanceOf(\PDOStatement::class, $stmt);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->rows("SELECT * FROM cd_email_queue WHERE status = 'sent'");
         $this->assertCount(1, $rows);
     }
 
+    /** @return list<array<mixed>> the rows of a query, each one asserted to be an array */
+    private function rows(string $sql): array
+    {
+        $statement = $this->pdo->query($sql);
+        $this->assertInstanceOf(\PDOStatement::class, $statement);
+        $rows = [];
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $this->assertIsArray($row);
+            $rows[] = $row;
+        }
+        return $rows;
+    }
+
+    /** A fetched integer: SQLite returns an int, or an integer string. */
+    private static function int(mixed $value): int
+    {
+        if (is_string($value) && preg_match('/\A-?\d+\z/', $value) === 1) {
+            $value = (int) $value;
+        }
+        self::assertIsInt($value);
+        return $value;
+    }
 }

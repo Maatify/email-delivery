@@ -191,7 +191,7 @@ final class EmailQueueWorker
                 $dueCandidates->bindValue(':entity_type_exact', $entityType);
             }
             $dueCandidates->execute();
-            $candidateIds = array_values(array_unique(array_map('intval', [
+            $candidateIds = array_values(array_unique(array_map(self::candidateId(...), [
                 ...$staleCandidates->fetchAll(PDO::FETCH_COLUMN),
                 ...$dueCandidates->fetchAll(PDO::FETCH_COLUMN),
             ])));
@@ -689,15 +689,38 @@ final class EmailQueueWorker
             throw new \LogicException('A PDO instance cannot be replaced; pass a connection factory to reconnect.');
         }
         $this->connection = null;
-        $connection = ($this->connectionFactory)();
-        if (!$connection instanceof PDO) {
-            throw new UnexpectedValueException('The email queue connection factory must return a PDO instance.');
-        }
+        $connection = self::requirePdo(($this->connectionFactory)());
         if ($connection->getAttribute(PDO::ATTR_ERRMODE) !== PDO::ERRMODE_EXCEPTION) {
             throw new UnexpectedValueException('The email queue connection factory must return a PDO in exception error mode.');
         }
         self::requireAutocommit($connection);
         return $this->connection = $connection;
+    }
+
+    /**
+     * A candidate's primary key as PDO returns it: an int, or a numeric string under emulated prepares (the same
+     * integer intval() gives). The integer key yields nothing else.
+     */
+    private static function candidateId(mixed $id): int
+    {
+        if (is_int($id)) {
+            return $id;
+        }
+        if (is_string($id)) {
+            return (int) $id;
+        }
+        throw new UnexpectedValueException('A claim candidate id must be an integer.');
+    }
+
+    /**
+     * The factory's PDO return type is documented, not enforced: a closure can return anything at runtime.
+     */
+    private static function requirePdo(mixed $connection): PDO
+    {
+        if (!$connection instanceof PDO) {
+            throw new UnexpectedValueException('The email queue connection factory must return a PDO instance.');
+        }
+        return $connection;
     }
 
     /**

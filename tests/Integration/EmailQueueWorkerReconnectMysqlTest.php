@@ -64,7 +64,7 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
             // Every connection still on this test's isolated database, except the fixture's own, belongs to
             // this test: the ones it opened and any a hook kept alive.
             $leftover = $this->pdo->query('SELECT ID FROM information_schema.PROCESSLIST WHERE DB = DATABASE() AND ID <> CONNECTION_ID()');
-            $threads = [...$this->openedThreads, ...array_map('intval', $leftover === false ? [] : $leftover->fetchAll(PDO::FETCH_COLUMN))];
+            $threads = [...$this->openedThreads, ...self::ints($leftover === false ? [] : $leftover->fetchAll(PDO::FETCH_COLUMN))];
             foreach (array_unique($threads) as $thread) {
                 try {
                     $this->pdo->exec('KILL CONNECTION ' . $thread);
@@ -855,7 +855,7 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
                 $other->exec("UPDATE cd_email_queue SET updated_at = updated_at WHERE id = $finished");
                 $observed['finished_row_write'] = 'no wait';
             } catch (PDOException $failure) {
-                $observed['finished_row_write'] = 'waited: ' . ($failure->errorInfo[1] ?? '?');
+                $observed['finished_row_write'] = 'waited: ' . self::driverCode($failure);
             } finally {
                 $other->rollBack();
             }
@@ -1105,7 +1105,7 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
                 try {
                     $other->exec("UPDATE cd_email_queue SET status = 'sent', sent_at = UTC_TIMESTAMP() WHERE id = $id");
                 } catch (PDOException $failure) {
-                    $observed['blocked'][] = $id . ': ' . ($failure->errorInfo[1] ?? '?');
+                    $observed['blocked'][] = $id . ': ' . self::driverCode($failure);
                     break;
                 } finally {
                     $other->rollBack();
@@ -1258,7 +1258,7 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
                     $other->exec("UPDATE cd_email_queue SET last_error = 'write during the claim' WHERE id = $job");
                     $observed['write during the claim'] = 'no wait';
                 } catch (PDOException $waited) {
-                    $observed['write during the claim'] = (string) ($waited->errorInfo[1] ?? '?');
+                    $observed['write during the claim'] = self::driverCode($waited);
                 }
             }
         };
@@ -1326,7 +1326,7 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
                 try {
                     $other->exec($probe);
                 } catch (PDOException $failure) {
-                    $observed['waited'][] = $what . ': ' . ($failure->errorInfo[1] ?? '?');
+                    $observed['waited'][] = $what . ': ' . self::driverCode($failure);
                 } finally {
                     $other->rollBack();
                 }
@@ -1371,7 +1371,8 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
             $other->exec('SET SESSION innodb_lock_wait_timeout = 1');
             $explained = preg_replace('/\bFOR UPDATE\b/', '', str_replace([':lease', ':entity_type_exact', ':entity_type'], ['300', "'" . $this->batchEntityType() . "'", "'" . $this->batchEntityType() . "'"], (string) preg_replace('/\(:id\d+(?:, :id\d+)*\)/', '(' . implode(', ', $candidates) . ')', $sql)));
             foreach (($other->query('EXPLAIN ' . $explained) ?: throw new \LogicException('EXPLAIN failed'))->fetchAll(PDO::FETCH_ASSOC) as $step) {
-                $observed['plan'][] = [(string) ($step['key'] ?? ''), (string) ($step['type'] ?? '')];
+                self::assertIsArray($step);
+                $observed['plan'][] = [self::text($step['key'] ?? null), self::text($step['type'] ?? null)];
             }
             usleep(150_000); // information_schema.INNODB_TRX is refreshed at most every 0.1 s
             $observed['rows_locked'] = (int) self::scalar($other, "SELECT trx_rows_locked FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = $workerThread");
@@ -1384,7 +1385,7 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
                 try {
                     $other->exec("UPDATE cd_email_queue SET status = 'sent', sent_at = UTC_TIMESTAMP() WHERE id = $id");
                 } catch (PDOException $failure) {
-                    $observed['blocked'][] = $id . ': ' . ($failure->errorInfo[1] ?? '?');
+                    $observed['blocked'][] = $id . ': ' . self::driverCode($failure);
                 } finally {
                     $other->rollBack();
                 }
@@ -1621,8 +1622,7 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
             SELECT ' . implode(', ', array_map(static fn (string $column): string => 's.' . $column, $copied)) . ", NULL, 1, 'pending', 0, $scheduled, $retry
             FROM cd_email_queue s, $digits a, $digits b, $digits c WHERE s.id = $seed LIMIT " . ($count - 1));
         $this->pdo->exec("UPDATE cd_email_queue SET priority = 1, scheduled_at = $scheduled, retry_after = $retry WHERE id = $seed");
-        /** @var list<int> $ids */
-        $ids = array_map('intval', ($this->pdo->query("SELECT id FROM cd_email_queue WHERE status = 'pending' AND priority = 1 ORDER BY id") ?: throw new \LogicException('No rows'))->fetchAll(PDO::FETCH_COLUMN));
+        $ids = self::ints(($this->pdo->query("SELECT id FROM cd_email_queue WHERE status = 'pending' AND priority = 1 ORDER BY id") ?: throw new \LogicException('No rows'))->fetchAll(PDO::FETCH_COLUMN));
         self::assertCount($count, $ids);
         return $ids;
     }
@@ -1689,10 +1689,12 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
             JOIN performance_schema.threads t ON t.THREAD_ID = l.THREAD_ID
             WHERE t.PROCESSLIST_ID = $thread AND l.LOCK_TYPE = 'RECORD'");
         $locks = [];
-        foreach (($statement ?: throw new \LogicException('data_locks query failed'))->fetchAll(PDO::FETCH_NUM) as [$index, $mode, $data]) {
+        foreach (($statement ?: throw new \LogicException('data_locks query failed'))->fetchAll(PDO::FETCH_NUM) as $lock) {
+            self::assertIsArray($lock);
+            [$index, $mode, $data] = array_map(self::text(...), $lock);
             // A secondary index entry lists its key columns and then the primary key: the id is the last value.
-            $parts = explode(',', (string) $data);
-            $locks[] = [(string) $index, (string) $mode, trim((string) end($parts))];
+            $parts = explode(',', $data);
+            $locks[] = [$index, $mode, trim((string) end($parts))];
         }
         usort($locks, static fn (array $a, array $b): int => [(int) $a[2], $a[0]] <=> [(int) $b[2], $b[0]]);
         return $locks;
@@ -1832,7 +1834,9 @@ class EmailQueueWorkerReconnectMysqlTest extends IsolatedEmailMysqlTestCase
 
     private function closeWorkerConnection(): void
     {
-        $this->closeConnection($this->connectionIds[array_key_last($this->connectionIds)]);
+        $last = array_key_last($this->connectionIds);
+        self::assertNotNull($last, 'The worker opened a connection.');
+        $this->closeConnection($this->connectionIds[$last]);
     }
 
     /** A real server-side close of a connection, as on a restart or a network cut. */

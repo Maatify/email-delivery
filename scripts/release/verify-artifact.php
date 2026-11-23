@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Maatify\EmailDelivery\ReleaseTools;
 
 require_once __DIR__ . '/lib.php';
+$directory = null;
 try {
     $directory = evidenceDirectory('email-artifact');
     $root = dirname(__DIR__, 2);
@@ -67,7 +68,7 @@ try {
 } catch (\Throwable $failure) {
     $failureReport = ['outcome' => 'FAIL', 'target' => $target ?? $version ?? null,
         'candidate_sha' => $sha ?? null, 'error' => $failure->getMessage()];
-    if (isset($directory)) {
+    if ($directory !== null) {
         file_put_contents($directory . '/failure.json', json_encode($failureReport, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT) . "\n");
     }
     fwrite(STDERR, 'FAIL: ' . $failure->getMessage() . "\n");

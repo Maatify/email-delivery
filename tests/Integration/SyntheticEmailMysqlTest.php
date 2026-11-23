@@ -166,7 +166,7 @@ final class SyntheticEmailMysqlTest extends IsolatedEmailMysqlTestCase
         $row = $statement->fetch(PDO::FETCH_ASSOC);
         self::assertIsArray($row);
         self::assertSame('2030-01-01 12:00:00', $row['requested_scheduled_at']);
-        $plain = Factory::crypto()->context(SyntheticEmailContexts::payload((new Factory())->emailQueuePayload()))->decrypt((string) $row['payload_encrypted'], (string) $row['payload_key_id'], ReversibleCryptoAlgorithmEnum::AES_256_GCM, new ReversibleCryptoMetadataDTO((string) $row['payload_iv'], (string) $row['payload_tag']));
+        $plain = Factory::crypto()->context(SyntheticEmailContexts::payload((new Factory())->emailQueuePayload()))->decrypt(self::text($row['payload_encrypted']), self::text($row['payload_key_id']), ReversibleCryptoAlgorithmEnum::AES_256_GCM, new ReversibleCryptoMetadataDTO(self::text($row['payload_iv']), self::text($row['payload_tag'])));
         self::assertStringContainsString('original', $plain);
         self::assertStringNotContainsString('changed', $plain);
     }
@@ -237,12 +237,14 @@ final class SyntheticEmailMysqlTest extends IsolatedEmailMysqlTestCase
     {
         $pdo = new EmailQueueFaultPdo();
         $store = $this->store($pdo);
-        foreach ([['value' => INF], ['value' => new DateTimeImmutable()], ['value' => str_repeat('x', 1048577)]] as $context) {
+        // Transactions begun on the connection when each invalid input was rejected: none, every time.
+        $begunAtRejection = [];
+        foreach (['INF' => ['value' => INF], 'date object' => ['value' => new DateTimeImmutable()], 'oversized' => ['value' => str_repeat('x', 1048577)]] as $name => $context) {
             try {
                 $store->record($this->request($context));
                 self::fail('Invalid context must fail before SQL.');
             } catch (InvalidArgumentException) {
-                self::assertSame(0, $pdo->beginCalls);
+                $begunAtRejection["context $name"] = $pdo->beginCalls;
             }
         }
         foreach ([0, -1, 1001] as $limit) {
@@ -250,7 +252,7 @@ final class SyntheticEmailMysqlTest extends IsolatedEmailMysqlTestCase
                 $store->purgeExpired($limit);
                 self::fail('Invalid limit must fail.');
             } catch (InvalidArgumentException) {
-                self::assertSame(0, $pdo->beginCalls);
+                $begunAtRejection["limit $limit"] = $pdo->beginCalls;
             }
         }
         foreach ([0, -1, 2147483648] as $retention) {
@@ -258,9 +260,14 @@ final class SyntheticEmailMysqlTest extends IsolatedEmailMysqlTestCase
                 $this->store($pdo, $retention);
                 self::fail('Retention must be explicit and valid.');
             } catch (InvalidArgumentException) {
-                self::assertSame(0, $pdo->beginCalls);
+                $begunAtRejection["retention $retention"] = $pdo->beginCalls;
             }
         }
+        self::assertSame([
+            'context INF' => 0, 'context date object' => 0, 'context oversized' => 0,
+            'limit 0' => 0, 'limit -1' => 0, 'limit 1001' => 0,
+            'retention 0' => 0, 'retention -1' => 0, 'retention 2147483648' => 0,
+        ], $begunAtRejection, 'Every invalid input is rejected before a transaction begins.');
     }
 
     /** @return iterable<string, array{string, bool, bool}> */
