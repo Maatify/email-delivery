@@ -73,6 +73,33 @@ function read(string $path): string
     return $value;
 }
 
+/** Reject Markdown documents that end inside an unclosed fenced code block. */
+function verifyMarkdownFences(string $markdown, string $path = 'Markdown'): void
+{
+    $openMarker = null;
+    $openLength = 0;
+    foreach (explode("\n", $markdown) as $lineNumber => $line) {
+        $line = rtrim($line, "\r");
+        if ($openMarker === null) {
+            if (preg_match('/^ {0,3}(`{3,}|~{3,})(.*)$/D', $line, $match) !== 1) {
+                continue;
+            }
+            $marker = $match[1][0];
+            ensure($marker !== '`' || !str_contains($match[2], '`'),
+                'Invalid backtick in Markdown fence info string in ' . $path . ':' . ($lineNumber + 1));
+            $openMarker = $marker;
+            $openLength = strlen($match[1]);
+            continue;
+        }
+        $pattern = '/^ {0,3}' . preg_quote($openMarker, '/') . '{' . $openLength . ',}[ \t]*$/D';
+        if (preg_match($pattern, $line) === 1) {
+            $openMarker = null;
+            $openLength = 0;
+        }
+    }
+    ensure($openMarker === null, 'Unclosed Markdown fenced code block in ' . $path . '.');
+}
+
 /** Reject live release-state claims in distributed consumer text unless their time boundary is explicit. */
 function verifyPublicationClaimsAreTemporal(string $root): void
 {
