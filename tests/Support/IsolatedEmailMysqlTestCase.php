@@ -82,7 +82,9 @@ abstract class IsolatedEmailMysqlTestCase extends TestCase
             if (is_string($value) && preg_match('/\A-?\d+\z/', $value) === 1) {
                 $value = (int) $value;
             }
-            self::assertIsInt($value, 'An integer column value.');
+            if (!is_int($value)) {
+                throw new RuntimeException('Fixture query returned a non-integer value.');
+            }
             $ints[] = $value;
         }
         return $ints;
@@ -94,7 +96,9 @@ abstract class IsolatedEmailMysqlTestCase extends TestCase
         if ($value === null) {
             return '';
         }
-        self::assertIsScalar($value, 'A scalar column value.');
+        if (!is_scalar($value)) {
+            throw new RuntimeException('Fixture query returned a non-scalar value.');
+        }
         return (string) $value;
     }
 
