@@ -73,6 +73,27 @@ function read(string $path): string
     return $value;
 }
 
+/** Reject Markdown documents that end inside an unclosed fenced code block. */
+function verifyMarkdownFences(string $markdown, string $path = 'Markdown'): void
+{
+    $environment = new \League\CommonMark\Environment\Environment();
+    $environment->addExtension(new \League\CommonMark\Extension\CommonMark\CommonMarkCoreExtension());
+    $document = (new \League\CommonMark\Parser\MarkdownParser($environment))->parse($markdown);
+    foreach ($document->iterator(\League\CommonMark\Node\NodeIterator::FLAG_BLOCKS_ONLY) as $node) {
+        if (!$node instanceof \League\CommonMark\Extension\CommonMark\Node\Block\FencedCode) {
+            continue;
+        }
+        $startLine = $node->getStartLine();
+        $endLine = $node->getEndLine();
+        ensure(is_int($startLine) && is_int($endLine), 'Cannot locate fenced code block in ' . $path . '.');
+        // CommonMark's source span includes both delimiters when closed; the literal has one newline per body line.
+        $sourceLineCount = $endLine - $startLine + 1;
+        $contentLineCount = substr_count($node->getLiteral(), "\n");
+        ensure($sourceLineCount >= $contentLineCount + 2,
+            'Unclosed Markdown fenced code block in ' . $path . ' starting at line ' . $startLine . '.');
+    }
+}
+
 /** Reject live release-state claims in distributed consumer text unless their time boundary is explicit. */
 function verifyPublicationClaimsAreTemporal(string $root): void
 {

@@ -152,6 +152,5 @@ Any deviation from this order requires a **new ADR**.
 > No shared ownership. No shared queues.**
 
 **ADR-008 is hereby ACCEPTED and LOCKED.**
-```
 
 ---

@@ -41,6 +41,7 @@ $links = 0;
 $snippets = 0;
 foreach ($paths as $path) {
     $body = read($path);
+    verifyMarkdownFences($body, substr($path, strlen($root) + 1));
     preg_match_all('/!?\[[^\]\n]*\]\(([^\s)]+)(?:\s+"[^"]*")?\)/u', $body, $matches);
     foreach ($matches[1] as $link) {
         if (preg_match('/^[a-zA-Z][\w+.-]*:/', $link) === 1) {
