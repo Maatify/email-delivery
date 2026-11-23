@@ -1,6 +1,8 @@
 # Architecture
 
-[Book](README.md) · [Keyed contract](../reference/idempotency.md)
+[Book](README.md) · [Keyed contract](../reference/idempotency.md) · [v1.3.0 publication record](../releases/1.3.0-publication.md)
+
+This is the current architecture of the released 1.3.0 package, published on 2026-11-23. Earlier 1.2.0 behavior is identified where relevant.
 
 The package owns email delivery storage, rendering and transport. Applications own intent, identities,
 authorization, connection/key configuration, process supervision and any HTTP integration.

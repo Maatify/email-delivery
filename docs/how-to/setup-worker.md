@@ -2,8 +2,8 @@
 
 [Guides](README.md) · [Lifecycle and clocks](../book/worker.md) · [Typed composition](../examples/worker-runner.php)
 
-This guide describes the 1.3.0 source. Connection recovery, processing leases and entity-type
-scoped batches are not included in the published 1.2.0 package.
+This guide describes released version 1.3.0, published on 2026-11-23. Connection recovery,
+processing leases and entity-type-scoped batches are not included in the earlier 1.2.0 package.
 
 `EmailQueueWorker` processes one batch when the application calls `processBatch()`. There is no
 bundled daemon/bootstrap script. Your DI container supplies a connection factory, crypto/context

@@ -2,8 +2,8 @@
 
 [Package Reference](../reference/PACKAGE_REFERENCE.md) · [Examples](../../examples/README.md) · [Schema adoption](../upgrade.md)
 
-This guide describes the 1.3.0 source and labels version-specific additions; 1.2.0
-consumers should use the tagged dependency contract and upgrade guidance.
+This guide describes the released 1.3.0 package, published on 2026-11-23, and labels version-specific behavior.
+Consumers on 1.2.0 should use that tagged dependency contract and the upgrade guidance.
 
 ## Fit, requirements and non-goals
 

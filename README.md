@@ -21,10 +21,10 @@ transport through PHPMailer. Applications enqueue work; a separately run worker 
 
 ---
 
-Release artifact target: **1.3.0**. Publication state **at qualification**: **unpublished**.
-The latest externally published version **at qualification** is [1.2.0](https://github.com/Maatify/email-delivery/releases/tag/v1.2.0),
-published on 2026-11-06 UTC and verified as an exact Composer dist installation. These publication facts are a qualification snapshot;
-they do not assert the package's availability after qualification.
+Latest stable release: [1.3.0](https://github.com/Maatify/email-delivery/releases/tag/v1.3.0), published 2026-11-23.
+Its release-qualified source is `f72addfaff7da1813e2b1005bf706713512e375b`; see the [publication record](docs/releases/1.3.0-publication.md)
+for CI, release-artifact and external Composer verification evidence. The immutable 1.3.0 artifact retains the qualification snapshot
+that recorded its pre-publication state.
 
 ## Start here
 
@@ -73,8 +73,7 @@ DTO fields, enum values, exceptions and behavioral boundaries. Internal helpers 
 composer require maatify/email-delivery:1.3.0
 ```
 
-Run that exact install command when 1.3.0 is available from Packagist. At qualification, install
-`composer require maatify/email-delivery:1.2.0`. The unpinned command
+The exact 1.3.0 version is available from Packagist. The unpinned command
 `composer require maatify/email-delivery` resolves to the version Packagist offers at install time.
 
 Version 1.3.0 requires PHP 8.2+, JSON and PDO, plus `maatify/crypto`, Twig, PHPMailer (6.9+ or 7), PSR-3 logging and

@@ -1,15 +1,15 @@
 # Changelog
 
 Changes follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html). This file's Unreleased section does not
-publish a version. See [release preparation](docs/release-preparation.md).
-Published dates below use the corresponding GitHub Release publication date in UTC.
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). Published dates below use the corresponding
+GitHub Release publication date in UTC. The latest release is [1.3.0](docs/releases/1.3.0-publication.md);
+see [release preparation](docs/release-preparation.md) for qualification and publication procedures.
 
 ## [Unreleased]
 
 <a id="130"></a>
 
-## [1.3.0]
+## [1.3.0] - 2026-11-23
 
 ### Added
 - `EmailQueueWorker::processBatchByEntityType(string $entityType, int $limit = 50)` (#12): one batch of the
@@ -168,7 +168,8 @@ Published dates below use the corresponding GitHub Release publication date in U
 - Encryption support for queue payloads via `maatify/crypto`.
 - Worker retry mechanism with exponential backoff for transient and permanent failures.
 
-[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Maatify/email-delivery/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.2.0
 [1.1.1]: https://github.com/Maatify/email-delivery/releases/tag/v1.1.1
 [1.1.0]: https://github.com/Maatify/email-delivery/releases/tag/v1.1.0

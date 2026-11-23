@@ -1,6 +1,8 @@
 # Introduction
 
-[Book](README.md) · [Documentation](../README.md)
+[Book](README.md) · [Documentation](../README.md) · [v1.3.0 publication record](../releases/1.3.0-publication.md)
+
+This introduction describes released version 1.3.0, published on 2026-11-23.
 
 Maatify Email Delivery is a channel-owned queue/render/SMTP library. It does not decide why to notify,
 authenticate tenants, read application notification tables or supply an HTTP server.

@@ -5,14 +5,14 @@
 
 ## Artifact identity
 
-At qualification, version **1.2.0** was the latest **published** version within the supported 1.x line.
-At qualification, version **1.3.0** was an **unpublished** release target; this qualification snapshot does not assert
-availability after qualification. The 1.2.0 tagged artifact and its publication evidence remain immutable. Publication does not change the security
-reporting route or create a different support policy.
+The latest published release in the supported 1.x line is [1.3.0](https://github.com/Maatify/email-delivery/releases/tag/v1.3.0),
+published on 2026-11-23. Its source commit is `f72addfaff7da1813e2b1005bf706713512e375b`; see the
+[publication record](docs/releases/1.3.0-publication.md). The 1.2.0 tagged artifact and its publication evidence remain immutable.
+Publication does not change the security reporting route or create a different support policy.
 
 ## Supported Versions
 
-At qualification, the active security-supported major line was 1.x.
+The active security-supported major line is 1.x.
 
 | Version | Supported          |
 | ------- | ------------------ |
